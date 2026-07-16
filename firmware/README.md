@@ -10,6 +10,8 @@
 | v3-min | `minimum_board.hex` | 当前最新，PC13绿(低电平) |
 | v3-plate | `license_plate.hex` | 当前最新，PB12/13/14 |
 
+> 注：v1/v2 对应旧 git 仓库的 commit 历史已丢失，v3 对应 `2ec40c7`。
+
 两板统一接线：USART1(PA9/PA10)→4G模块，USART3(PB10/PB11)→PC调试串口。
 
 ## 硬件连接
