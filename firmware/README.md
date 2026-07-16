@@ -2,13 +2,13 @@
 
 ## 文件说明
 
-| 版本 | 文件 | 板型 | 说明 |
-|------|------|------|------|
-| v1 | `license_plate_v1.hex` | 车牌板 | 基础 MQTT 控制，无 ICCID 存储 |
-| v2.1 | `license_plate_v21.hex` | 车牌板 | ICCID 存储 + 唯一 Client ID + ENTM |
-| v2.2 | `license_plate_v22.hex` | 车牌板 | 修复UART映射反了、LED缺PB13/PB14 |
-| v3-min | `minimum_board.hex` | 最小板 | 当前最新，PC13绿 |
-| v3-plate | `license_plate.hex` | 车牌板 | 当前最新，PB12/13/14 |
+| 版本 | 文件 | 说明 |
+|------|------|------|
+| v1 | `license_plate_v1.hex` | 基础 MQTT 控制，无 ICCID 存储 |
+| v2.1 | `license_plate_v21.hex` | ICCID 存储 + 唯一 Client ID + ENTM |
+| v2.2 | `license_plate_v22.hex` | 修复UART映射反了、LED缺PB13/PB14 |
+| v3-min | `minimum_board.hex` | 当前最新，PC13绿(低电平) |
+| v3-plate | `license_plate.hex` | 当前最新，PB12/13/14 |
 
 两板统一接线：USART1(PA9/PA10)→4G模块，USART3(PB10/PB11)→PC调试串口。
 
