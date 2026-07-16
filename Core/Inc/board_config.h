@@ -2,8 +2,8 @@
 #define BOARD_CONFIG_H
 
 /* 选择主板：取消注释对应行 */
-// #define LICENSE_PLATE_BOARD
-#define MINIMUM_BOARD
+#define LICENSE_PLATE_BOARD
+// #define MINIMUM_BOARD
 
 /* MQTT 主题前缀 */
 #define MQTT_TOPIC_PREFIX  "xiaoyeziUESTC1147"
