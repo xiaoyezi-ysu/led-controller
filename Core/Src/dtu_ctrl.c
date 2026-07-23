@@ -74,14 +74,24 @@ void DTU_Process(uint32_t now)
       break;
     case _4G_SEND_MQTT_PUB:
       printf("4G: MQTTPUB1\r\n");
-      send_at("AT+MQTTPUB1=DTU_Topic1147,0,0\r\n");
+    {
+      char cmd[96];
+      if (iccid_loaded && my_iccid[0])
+        snprintf(cmd, sizeof(cmd), "AT+MQTTPUB1=DTU_Topic1147/%s,0,0\r\n", my_iccid);
+      else
+        snprintf(cmd, sizeof(cmd), "AT+MQTTPUB1=DTU_Topic1147,0,0\r\n");
+      send_at(cmd);
+    }
       _4g_state = _4G_SEND_MQTT_SUB;
       break;
     case _4G_SEND_MQTT_SUB:
       printf("4G: MQTTSUB1\r\n");
     {
-      char cmd[64];
-      snprintf(cmd, sizeof(cmd), "AT+MQTTSUB1=" MQTT_TOPIC_PREFIX ",0\r\n");
+      char cmd[96];
+      if (iccid_loaded && my_iccid[0])
+        snprintf(cmd, sizeof(cmd), "AT+MQTTSUB1=" MQTT_TOPIC_PREFIX "/%s,0\r\n", my_iccid);
+      else
+        snprintf(cmd, sizeof(cmd), "AT+MQTTSUB1=" MQTT_TOPIC_PREFIX ",0\r\n");
       send_at(cmd);
     }
       _4g_state = _4G_SEND_AT;
