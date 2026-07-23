@@ -192,7 +192,7 @@ int main(void)
       json_ready = 0;
       printf("MQTT> %s\r\n", (char*)json_buf);
       uint8_t match = 1;
-      if (iccid_loaded)
+      if (my_iccid[0])
       {
         match = (strstr((char*)json_buf, my_iccid) != NULL);
       }

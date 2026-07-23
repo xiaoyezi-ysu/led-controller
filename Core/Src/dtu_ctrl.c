@@ -33,7 +33,7 @@ void DTU_Process(uint32_t now)
 
   uint32_t wait = 2500;
   if      (_4g_state == _4G_POWER_ON) wait = 10000;
-  else if (_4g_state == _4G_FLUSH)    wait = 12000;
+  else if (_4g_state == _4G_FLUSH)    wait = 20000;
   if (now - tick < wait) return;
   tick = now;
 
@@ -45,6 +45,11 @@ void DTU_Process(uint32_t now)
     case _4G_SEND_PLUS:
       printf("4G: +++\r\n");
       send_at("+++");
+      _4g_state = _4G_SEND_WKMOD;
+      break;
+    case _4G_SEND_WKMOD:
+      printf("4G: WKMOD\r\n");
+      send_at("AT+WKMOD1=MQTT\r\n");
       _4g_state = _4G_SEND_MQTT_SVR;
       break;
     case _4G_SEND_MQTT_SVR:
@@ -56,16 +61,20 @@ void DTU_Process(uint32_t now)
       printf("4G: MQTTCONN1\r\n");
     {
       char buf[96];
-      int n;
       if (iccid_loaded && my_iccid[0])
-        n = snprintf(buf, sizeof(buf), "AT+MQTTCONN1=card_%s,,,60,1\r\n", my_iccid);
+        snprintf(buf, sizeof(buf), "AT+MQTTCONN1=card_%s,,,60,1\r\n", my_iccid);
       else
       {
         uint32_t uid = *(uint32_t*)0x1FFFF7E8;
-        n = snprintf(buf, sizeof(buf), "AT+MQTTCONN1=stm32_%08X,,,60,1\r\n", (unsigned int)uid);
+        snprintf(buf, sizeof(buf), "AT+MQTTCONN1=stm32_%08X,,,60,1\r\n", (unsigned int)uid);
       }
       send_at(buf);
     }
+      _4g_state = _4G_SEND_MQTT_PUB;
+      break;
+    case _4G_SEND_MQTT_PUB:
+      printf("4G: MQTTPUB1\r\n");
+      send_at("AT+MQTTPUB1=DTU_Topic1147,0,0\r\n");
       _4g_state = _4G_SEND_MQTT_SUB;
       break;
     case _4G_SEND_MQTT_SUB:
@@ -89,21 +98,20 @@ void DTU_Process(uint32_t now)
         _4g_state = _4G_SAVE;
         break;
       }
+      json_len = 0;
       printf("4G: AT+ICCID?\r\n");
       send_at("AT+ICCID?\r\n");
       _4g_state = _4G_PARSE_ICCID;
       break;
     case _4G_PARSE_ICCID:
     {
-      char *p = strstr((char*)json_buf, "+ICCID");
+      char *p = strstr((char*)json_buf, "+ICCID:");
       if (p)
       {
-        char *num = p + 6;
-        if (*num == ':') num++;
+        char *num = p + 7;
         while (*num >= '0' && *num <= '9') num++;
         *num = '\0';
-        strcpy(my_iccid, p + 6);
-        if (my_iccid[0] == ':') memmove(my_iccid, my_iccid + 1, strlen(my_iccid));
+        strcpy(my_iccid, p + 7);
         printf("ICCID: %s\r\n", my_iccid);
         ICCID_Save(my_iccid);
         iccid_loaded = 1;
@@ -115,6 +123,12 @@ void DTU_Process(uint32_t now)
     case _4G_SAVE:
       printf("4G: AT+S\r\n");
       send_at("AT+S\r\n");
+      _4g_state = _4G_REBOOT;
+      break;
+    case _4G_REBOOT:
+      printf("4G: AT+Z\r\n");
+      send_at("AT+Z\r\n");
+      json_len = 0;
       _4g_state = _4G_FLUSH;
       break;
     case _4G_FLUSH:

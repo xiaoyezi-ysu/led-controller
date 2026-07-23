@@ -10,9 +10,24 @@
 | v3-min | `minimum_board.hex` | 当前最新，PC13绿(低电平) |
 | v3-plate | `license_plate.hex` | 当前最新，PB12/13/14 |
 
-> 注：v1/v2 对应旧 git 仓库的 commit 历史已丢失，v3 对应 `2ec40c7`。
+> 注：v1/v2 对应旧 git 仓库的 commit 历史已丢失。
 
-两板统一接线：USART1(PA9/PA10)→4G模块，USART3(PB10/PB11)→PC调试串口。
+## 关键修改记录
+
+### v3 最终版（当前）
+
+| 修改 | 说明 |
+|------|------|
+| 分层架构 | 4G状态机移至 `dtu_ctrl.c`，`main.c` 仅调用 DTU_Init/Process |
+| 移除 ENTM | 模块 AT+S 后自动进透传，不再需要 AT+ENTM |
+| FLUSH 等待 12s | 给足模块重启+连MQTT的时间 |
+| AT+WKMOD1=MQTT | 设置工作模式为MQTT（关键修复，否则MQTTSV1/CONN1报ERR:4） |
+| AT+Z 强制重启 | AT+S 存配置后加 AT+Z 确保模块重启进入MQTT模式 |
+| FLUSH 增至 20s | 确保模块有足够时间注册网络+连MQTT |
+| ICCID 匹配启用 | 命令中必须含本机 ICCID 才处理（防多模块串扰） |
+| ICCID 解析修复 | `strstr` 搜 `"+ICCID:"` 而非 `"+ICCID"`，避免匹配到 AT 回显 |
+| json_buf 清零 | ICCID 查询前清缓冲区，防256字节溢出导致截断 |
+| MQTTMTPC 不设 | 默认OFF即可工作，设为ON反而导致UART→MQTT无应答（原因待查） |
 
 ## 硬件连接
 
