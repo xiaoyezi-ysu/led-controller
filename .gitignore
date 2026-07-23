@@ -3,3 +3,4 @@ build/
 /Src/
 gen.txt
 .mklink/
+*.baiduyun.*
