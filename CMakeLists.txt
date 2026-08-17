@@ -47,7 +47,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/sc7a20h.c
     Core/Src/iccid_storage.c
-    Core/Src/dtu_ctrl.c
+    Core/Src/dtu.c
 )
 
 # Add include paths

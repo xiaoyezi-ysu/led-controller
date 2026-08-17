@@ -225,7 +225,7 @@
         let client = null, isConnected = false, deviceId = '';
         let devices = [];
         const DEFAULT_DEVICES = [
-            { name: '车牌', id: '89860812192380777521', fixed: true },
+            { name: '车牌', id: '898608961026C0241530', fixed: true },
             { name: 'PC13灯', id: '89860812192380777549', fixed: true },
             { name: '测试', id: '00000', fixed: true }
         ];
@@ -237,10 +237,12 @@
             } catch(e) {}
             try { devices = JSON.parse(localStorage.getItem('led_devices')) || []; }
             catch(e) { devices = []; }
-            // merge defaults (user-added only, keep fixed ones)
-            const existing = new Set(devices.map(d => d.id));
+            // merge defaults by name (fixed devices always taken from code, so a
+            // stale cached "车牌" with the old ICCID cannot shadow the correct one)
             for (const d of DEFAULT_DEVICES) {
-                if (!existing.has(d.id)) devices.push({...d});
+                const i = devices.findIndex(x => x.name === d.name);
+                if (i >= 0) devices[i] = {...d};
+                else devices.push({...d});
             }
         }
         async function saveDevices() {
@@ -319,8 +321,13 @@
         async function init() {
             await loadDevices();
             renderDevices();
-            const saved = localStorage.getItem('led_device_id');
-            if (saved) document.getElementById('deviceId').value = saved;
+            // auto-select the real license-plate board (ICCID 898608961026C0241530)
+            const idx = devices.findIndex(d => d.id === '898608961026C0241530');
+            if (idx >= 0) selectDevice(idx);
+            else {
+                const saved = localStorage.getItem('led_device_id');
+                if (saved) document.getElementById('deviceId').value = saved;
+            }
         }
 
         function toggleConnection() {

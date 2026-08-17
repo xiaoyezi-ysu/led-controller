@@ -25,7 +25,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "board_config.h"
-#include "dtu_ctrl.h"
+#include "dtu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -69,6 +69,7 @@ uint8_t uart3_rx_byte;
 static volatile uint8_t rbuf[RBUF_SIZE];
 static volatile uint16_t rbuf_wr = 0;
 static uint16_t rbuf_rd = 0;
+volatile uint8_t dbg_trigger = 0;   /* COM21 收到 '~' 时置位，主循环执行调试探针 */
 
 /* 4G auto-test state machine */
 extern _4G_State _4g_state;
@@ -178,6 +179,12 @@ int main(void)
 
     DTU_Process(now);
 
+    if (dbg_trigger)
+    {
+      dbg_trigger = 0;
+      DTU_DebugProbe();
+    }
+
     /* 4G UART → PC UART passthrough */
     while (rbuf_rd != rbuf_wr)
     {
@@ -191,16 +198,61 @@ int main(void)
     {
       json_ready = 0;
       printf("MQTT> %s\r\n", (char*)json_buf);
+      DTU_MarkCmdReceived();
+      /* Web App 格式 {"cmd":"led","color":"red|blue|green","state":"on|off"}
+         该格式通过 MQTT 订阅主题(已含 ICCID)路由到本机，无需再校验 ICCID */
+      int is_web_led = (strstr((char*)json_buf, "\"cmd\":\"led\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\": \"led\"") != NULL);
       uint8_t match = 1;
-      if (my_iccid[0])
+      if (!is_web_led && my_iccid[0])
       {
         match = (strstr((char*)json_buf, my_iccid) != NULL);
       }
       if (match)
       {
-        const char *ack_cmd = "off";
+        /* 默认 NULL：仅当识别到具体指令时才回 ACK。
+           防止模组自回显(如心跳 ready、探针 +++)被当成指令解析后，
+           因默认值 "off" 而自动刷 {"cmd":"off","status":"ok"}。 */
+        const char *ack_cmd = NULL;
       #ifdef LICENSE_PLATE_BOARD
-        if (strstr((char*)json_buf, "\"cmd\":\"red\"") || strstr((char*)json_buf, "\"cmd\": \"red\""))
+        if (is_web_led)
+        {
+          /* Web App 格式：{"cmd":"led","color":"red|blue|green","state":"on|off"} */
+          int led_on = (strstr((char*)json_buf, "\"state\":\"on\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"state\": \"on\"") != NULL);
+          if (!led_on)
+          {
+            HAL_GPIO_WritePin(LED_PORT, LED_ALL, LED_GPIO_OFF);
+            printf("LED: ALL OFF\r\n");
+            ack_cmd = "off";
+          }
+          else if (strstr((char*)json_buf, "\"color\":\"red\"") || strstr((char*)json_buf, "\"color\": \"red\""))
+          {
+            HAL_GPIO_WritePin(LED_PORT, LED_RED_PIN, LED_GPIO_ON);
+            printf("LED: RED ON\r\n");
+            ack_cmd = "red";
+          }
+          else if (strstr((char*)json_buf, "\"color\":\"blue\"") || strstr((char*)json_buf, "\"color\": \"blue\""))
+          {
+            HAL_GPIO_WritePin(LED_PORT, LED_YEL_PIN, LED_GPIO_ON);
+            printf("LED: YELLOW ON\r\n");
+            ack_cmd = "yellow";
+          }
+          else if (strstr((char*)json_buf, "\"color\":\"green\"") || strstr((char*)json_buf, "\"color\": \"green\""))
+          {
+            HAL_GPIO_WritePin(LED_PORT, LED_GRN_PIN, LED_GPIO_ON);
+            printf("LED: GREEN ON\r\n");
+            ack_cmd = "green";
+          }
+          else
+          {
+            /* 未指定颜色时默认红灯 */
+            HAL_GPIO_WritePin(LED_PORT, LED_RED_PIN, LED_GPIO_ON);
+            printf("LED: RED ON\r\n");
+            ack_cmd = "red";
+          }
+        }
+        else if (strstr((char*)json_buf, "\"cmd\":\"red\"") || strstr((char*)json_buf, "\"cmd\": \"red\""))
         {
           HAL_GPIO_WritePin(LED_PORT, LED_RED_PIN, LED_GPIO_ON);
           printf("LED: RED ON\r\n");
@@ -250,7 +302,8 @@ int main(void)
           ack_cmd = "off";
         }
       #endif
-        /* ACK: transparent mode auto-publishes to broker */
+        /* ACK: 仅当 ack_cmd 被具体指令赋值时才回（unknown 消息静默，避免自动刷 off） */
+        if (ack_cmd != NULL)
         {
           char ack[64];
           int n = snprintf(ack, sizeof(ack), "{\"cmd\":\"%s\",\"status\":\"ok\"}", ack_cmd);
@@ -558,12 +611,20 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
       json_ready = 1;
     json_last_rx = HAL_GetTick();
 
+    DTU_RxByte(RX_BYTE_4G);
     HAL_UART_Receive_IT(&UART_4G, &RX_BYTE_4G, 1);
   }
   else if (huart->Instance == _PC_INST)
   {
-    /* PC→4G: forward byte to 4G UART */
-    HAL_UART_Transmit(&UART_4G, &RX_BYTE_PC, 1, 100);
+    /* PC→4G: forward byte to 4G UART；'~' 触发调试探针，不转发 */
+    if (RX_BYTE_PC == '~')
+    {
+      dbg_trigger = 1;
+    }
+    else
+    {
+      HAL_UART_Transmit(&UART_4G, &RX_BYTE_PC, 1, 100);
+    }
     HAL_UART_Receive_IT(&UART_PC, &RX_BYTE_PC, 1);
   }
 }
