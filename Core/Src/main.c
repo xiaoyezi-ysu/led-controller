@@ -70,6 +70,8 @@ static volatile uint8_t rbuf[RBUF_SIZE];
 static volatile uint16_t rbuf_wr = 0;
 static uint16_t rbuf_rd = 0;
 volatile uint8_t dbg_trigger = 0;   /* COM21 收到 '~' 时置位，主循环执行调试探针 */
+uint8_t g_low_power = 0;            /* 1=睡眠模式：STM32 深度空闲，仅被 4G 模组 UART 唤醒；
+                                         模组维持 MQTT 连接，LED 已熄灭 */
 
 /* 4G auto-test state machine */
 extern _4G_State _4g_state;
@@ -166,6 +168,9 @@ int main(void)
   uint32_t last_tick = HAL_GetTick();
   while (1)
   {
+    /* 睡眠模式：挂起 SysTick，让 MCU 真正深度空闲，仅被 UART/RTC 等中断唤醒；
+       非睡眠模式：恢复 SysTick 保证 1ms 时基与 HAL_Delay 正常。 */
+    if (g_low_power) HAL_SuspendTick(); else HAL_ResumeTick();
     __WFI();
     uint32_t now = HAL_GetTick();
 
@@ -182,6 +187,8 @@ int main(void)
     if (dbg_trigger)
     {
       dbg_trigger = 0;
+      HAL_ResumeTick();            /* 调试探针内部用 HAL_Delay，需恢复 SysTick */
+      g_low_power = 0; DTU_SetLowPower(0);
       DTU_DebugProbe();
     }
 
@@ -199,21 +206,42 @@ int main(void)
       json_ready = 0;
       printf("MQTT> %s\r\n", (char*)json_buf);
       DTU_MarkCmdReceived();
+      /* 模组把 STM32 自己发出的 ACK 回显回来，被当成新指令再处理会导致
+         echo 死循环(sleep 反复自睡自 ack、led 反复自 ack 刷屏)。
+         含 "status" 的是我们自己的 ACK 回显，直接忽略。 */
+      if (strstr((char*)json_buf, "\"status\"") == NULL)
+      {
       /* Web App 格式 {"cmd":"led","color":"red|blue|green","state":"on|off"}
          该格式通过 MQTT 订阅主题(已含 ICCID)路由到本机，无需再校验 ICCID */
       int is_web_led = (strstr((char*)json_buf, "\"cmd\":\"led\"") != NULL) ||
                        (strstr((char*)json_buf, "\"cmd\": \"led\"") != NULL);
+      /* 系统指令（sleep 等）与 Web 格式一样，靠订阅主题(已含 ICCID)路由到本机，
+         不再要求 payload 内出现 ICCID —— 否则 {"cmd":"sleep"} 会被 match 校验直接丢弃 */
+      int is_sys_cmd = (strstr((char*)json_buf, "\"cmd\":\"sleep\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\": \"sleep\"") != NULL);
       uint8_t match = 1;
-      if (!is_web_led && my_iccid[0])
+      if (!is_web_led && !is_sys_cmd && my_iccid[0])
       {
         match = (strstr((char*)json_buf, my_iccid) != NULL);
       }
       if (match)
       {
+        /* 任意被识别的指令都唤醒到活动模式（恢复心跳/探活、SysTick 已恢复） */
+        g_low_power = 0;
+        DTU_SetLowPower(0);
         /* 默认 NULL：仅当识别到具体指令时才回 ACK。
            防止模组自回显(如心跳 ready、探针 +++)被当成指令解析后，
            因默认值 "off" 而自动刷 {"cmd":"off","status":"ok"}。 */
         const char *ack_cmd = NULL;
+        /* 睡眠命令：关灯 + 进入 STM32 低功耗；4G 模组照常维持 MQTT 连接 */
+        if (strstr((char*)json_buf, "\"cmd\":\"sleep\"") || strstr((char*)json_buf, "\"cmd\": \"sleep\""))
+        {
+          HAL_GPIO_WritePin(LED_PORT, LED_ALL, LED_GPIO_OFF);
+          g_low_power = 1;
+          DTU_SetLowPower(1);
+          printf("LP: SLEEP (LED off, module keeps MQTT)\r\n");
+          ack_cmd = "sleep";
+        }
       #ifdef LICENSE_PLATE_BOARD
         if (is_web_led)
         {
@@ -310,6 +338,7 @@ int main(void)
           if (n > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)ack, n, 200);
         }
       }
+      } /* end: skip echoed ACK (contains "status") */
       json_len = 0;
       memset(json_buf, 0, JSON_BUF_SIZE);
     }

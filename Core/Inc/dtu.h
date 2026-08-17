@@ -26,6 +26,7 @@ typedef enum {
   _4G_PARSE_ICCID,     /* 解析 ICCID */
   _4G_PARSE_IMEI,      /* ICCID 失败 -> 回退 IMEI */
   _4G_SEND_MQTT,       /* 下发 MQTT 配置（24 字段） */
+  _4G_SEND_LED,        /* 下发模组指示灯关闭（config,set,led,2） */
   _4G_SEND_SAVE,       /* config,set,save（模块重启） */
   _4G_WAIT_BOOT,       /* 等待重启完成 */
   _4G_POLL_SSTA,       /* 轮询连接状态 ssta==4 */
@@ -43,5 +44,10 @@ void DTU_Process(uint32_t now);
 void DTU_RxByte(uint8_t b);     /* 由 UART RX 回调调用，捕获配置期应答 */
 void DTU_MarkCmdReceived(void); /* main.c 收到指令时调用，避免探活打断在途指令 */
 void DTU_DebugProbe(void);      /* COM21 发 '~' 触发，上报模块真实 MQTT 状态 */
+
+/* 睡眠/低功耗：开启后停掉 STM32 自身的心跳与链路探活，信任 4G 模组内部的
+   MQTT keepalive 维持服务器连接；STM32 仅靠 4G 模组 UART 来字节唤醒。 */
+void DTU_SetLowPower(uint8_t on);
+uint8_t DTU_IsLowPower(void);
 
 #endif /* DTU_H */

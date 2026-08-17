@@ -48,6 +48,22 @@ static uint32_t hb_tick = 0;
 static uint32_t probe_tick = 0;   /* 上次探活时刻 */
 static uint32_t cmd_rx_tick = 0;  /* 上次收到指令时刻 */
 
+/* 模组自身指示灯关闭模式（config,set,led,<mode>）：
+ * 0=正常, 1=仅关信号指示灯(NET), 2=关全部指示灯(NET+RDY)。
+ * 在 config,set,save 之前下发，随 MQTT 配置一并持久化，掉电/重启后保持熄灭。 */
+#ifndef DTU_LED_OFF_MODE
+#define DTU_LED_OFF_MODE  2
+#endif
+
+/* 睡眠/低功耗标志：开启后停 STM32 心跳与探活，信任模组 keepalive 维持连接 */
+static uint8_t low_power = 0;
+void DTU_SetLowPower(uint8_t on)
+{
+  low_power = on ? 1 : 0;
+  if (low_power) { hb_tick = 0; probe_tick = 0; }  /* 进入时清零计时，退出后重新开始 */
+}
+uint8_t DTU_IsLowPower(void) { return low_power; }
+
 /* 每次上电是否强制重新配置 DTU。
  * 银尔达配置掉电保存，生产固件可改为 0 并配合 flash 标志位只配置一次。 */
 #define DTU_FORCE_RECONFIG  1
@@ -168,28 +184,33 @@ void DTU_Process(uint32_t now)
 {
   (void)DTU_FORCE_RECONFIG; /* 当前每次上电均重配（见文件头说明） */
 
-  /* 进入 READY（透传）后：周期性心跳保活 + 链路探活自愈 */
+  /* 进入 READY（透传）后：周期性心跳保活 + 链路探活自愈。
+     睡眠模式下两者均跳过——4G 模组自身的 MQTT keepalive 已维持服务器连接，
+     STM32 无需再发言，可深度空闲。 */
   if (_4g_state == _4G_READY)
   {
-    if ((uint32_t)(now - hb_tick) >= HB_PERIOD_MS)
+    if (!low_power)
     {
-      hb_tick = now;
-      char hb[96];
-      int n = snprintf(hb, sizeof(hb),
-                       "{\"cmd\":\"ready\",\"id\":\"%s\"}\r\n", my_iccid);
-      if (n > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)hb, (uint16_t)n, 200);
-    }
-    /* 探活：周期性退出透传查 ssta，确认链路是否仍在线（空闲时才探，避免打断指令） */
-    if ((uint32_t)(now - probe_tick) >= PROBE_PERIOD_MS &&
-        (uint32_t)(now - cmd_rx_tick) >= RECOVER_IDLE_GUARD_MS)
-    {
-      probe_tick = now;
-      ssta_retry = 0;
-      printf("DTU: probe -> escape transparent\r\n");
-      dtu_clear_line();
-      dtu_send_raw("+++");          /* 退出透传，进入指令模式（不加 CRLF） */
-      tick = now;
-      _4g_state = _4G_RECOVER_ESC;
+      if ((uint32_t)(now - hb_tick) >= HB_PERIOD_MS)
+      {
+        hb_tick = now;
+        char hb[96];
+        int n = snprintf(hb, sizeof(hb),
+                         "{\"cmd\":\"ready\",\"id\":\"%s\"}\r\n", my_iccid);
+        if (n > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)hb, (uint16_t)n, 200);
+      }
+      /* 探活：周期性退出透传查 ssta，确认链路是否仍在线（空闲时才探，避免打断指令） */
+      if ((uint32_t)(now - probe_tick) >= PROBE_PERIOD_MS &&
+          (uint32_t)(now - cmd_rx_tick) >= RECOVER_IDLE_GUARD_MS)
+      {
+        probe_tick = now;
+        ssta_retry = 0;
+        printf("DTU: probe -> escape transparent\r\n");
+        dtu_clear_line();
+        dtu_send_raw("+++");          /* 退出透传，进入指令模式（不加 CRLF） */
+        tick = now;
+        _4g_state = _4G_RECOVER_ESC;
+      }
     }
     return;
   }
@@ -367,9 +388,17 @@ void DTU_Process(uint32_t now)
       printf("DTU> %s\r\n", cmd);
       dtu_clear_line();
       dtu_send(cmd);
-      _4g_state = _4G_SEND_SAVE;
+      _4g_state = _4G_SEND_LED;
       break;
     }
+
+    case _4G_SEND_LED:
+      printf("DTU> config,set,led,%d (turn off module LED)\r\n", DTU_LED_OFF_MODE);
+      dtu_clear_line();
+      snprintf(buf, sizeof(buf), "config,set,led,%d", DTU_LED_OFF_MODE);
+      dtu_send(buf);
+      _4g_state = _4G_SEND_SAVE;
+      break;
 
     case _4G_SEND_SAVE:
       printf("DTU> config,set,save (device will reboot)\r\n");
