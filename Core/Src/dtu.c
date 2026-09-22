@@ -55,6 +55,13 @@ static uint32_t cmd_rx_tick = 0;  /* 上次收到指令时刻 */
 #define DTU_LED_OFF_MODE  2
 #endif
 
+/* 模组 lp 下发值：1=开低功耗(保持连接)，0=关(满频在线)。
+ * 初始化阶段始终下发本值并随 config,set,save 持久化进 Flash，
+ * 因此改此宏即切换模组 lp 状态，重新编译即可做 lp,0 / lp,1 对照实验。 */
+#ifndef DTU_LP_VALUE
+#define DTU_LP_VALUE  0
+#endif
+
 /* 睡眠/低功耗标志：开启后停 STM32 心跳与探活，信任模组 keepalive 维持连接 */
 static uint8_t low_power = 0;
 void DTU_SetLowPower(uint8_t on)
@@ -63,6 +70,12 @@ void DTU_SetLowPower(uint8_t on)
   if (low_power) { hb_tick = 0; probe_tick = 0; }  /* 进入时清零计时，退出后重新开始 */
 }
 uint8_t DTU_IsLowPower(void) { return low_power; }
+
+/* 模组 lp 指令实测回执：初始化时发送 config,set,lp,1 后回读 config,get,lp，
+ * 结果（config,lp,ok,<val> 或 config,lp,error）经 MQTT 上报，便于在 PC 侧确认
+ * 本模组(Air780EPM/YED_DTU4_V2.0.x)是否支持该私有低功耗指令。 */
+static char lp_result[DTU_LINE_MAX] = "(unset)";  /* 与 dtu_line 等宽，避免回执被截断 */
+static uint8_t lp_reported = 0;
 
 /* 每次上电是否强制重新配置 DTU。
  * 银尔达配置掉电保存，生产固件可改为 0 并配合 flash 标志位只配置一次。 */
@@ -189,6 +202,14 @@ void DTU_Process(uint32_t now)
      STM32 无需再发言，可深度空闲。 */
   if (_4g_state == _4G_READY)
   {
+    /* 上线后一次性上报 lp 指令实测回执（不依赖 COM21 即可在 PC 侧确认模组是否支持） */
+    if (!lp_reported)
+    {
+      char m[DTU_LINE_MAX + 48];
+      int n = snprintf(m, sizeof(m), "{\"cmd\":\"lp\",\"status\":\"%s\"}\r\n", lp_result);
+      if (n > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)m, (uint16_t)n, 200);
+      lp_reported = 1;
+    }
     if (!low_power)
     {
       if ((uint32_t)(now - hb_tick) >= HB_PERIOD_MS)
@@ -397,6 +418,28 @@ void DTU_Process(uint32_t now)
       dtu_clear_line();
       snprintf(buf, sizeof(buf), "config,set,led,%d", DTU_LED_OFF_MODE);
       dtu_send(buf);
+      _4g_state = _4G_SEND_LP;
+      break;
+
+    case _4G_SEND_LP:
+      printf("DTU> config,set,lp,%d (module low-power %s)\r\n", DTU_LP_VALUE,
+             DTU_LP_VALUE ? "keep-alive" : "full-power");
+      dtu_clear_line();
+      snprintf(buf, sizeof(buf), "config,set,lp,%d", DTU_LP_VALUE);
+      dtu_send(buf);
+      HAL_Delay(600);
+      /* 立即回读 lp 状态，确认该私有指令在本模组是否被支持（ok/error） */
+      dtu_clear_line();
+      dtu_send("config,get,lp");
+      HAL_Delay(800);
+      snprintf(lp_result, sizeof(lp_result), "%s",
+               dtu_line_ready ? dtu_line : "(no-response)");
+      /* 去掉回执里附带的 \r\n，避免 MQTT 上报的 JSON 被截断 */
+      {
+        char *e = lp_result + strlen(lp_result);
+        while (e > lp_result && (e[-1] == '\r' || e[-1] == '\n')) *--e = '\0';
+      }
+      printf("DTU: lp query -> %s\r\n", lp_result);
       _4g_state = _4G_SEND_SAVE;
       break;
 

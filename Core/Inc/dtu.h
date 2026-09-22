@@ -27,6 +27,7 @@ typedef enum {
   _4G_PARSE_IMEI,      /* ICCID 失败 -> 回退 IMEI */
   _4G_SEND_MQTT,       /* 下发 MQTT 配置（24 字段） */
   _4G_SEND_LED,        /* 下发模组指示灯关闭（config,set,led,2） */
+  _4G_SEND_LP,         /* 下发模组低功耗保持连接（config,set,lp,1） */
   _4G_SEND_SAVE,       /* config,set,save（模块重启） */
   _4G_WAIT_BOOT,       /* 等待重启完成 */
   _4G_POLL_SSTA,       /* 轮询连接状态 ssta==4 */

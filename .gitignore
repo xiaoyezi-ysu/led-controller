@@ -4,3 +4,6 @@ build/
 gen.txt
 .mklink/
 *.baiduyun.*
+
+# 第三方工具 clone（md2docx 等），不属于本固件仓库
+tools/
