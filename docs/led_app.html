@@ -146,6 +146,9 @@
             <div class="status-dot" id="statusDot"></div>
             <span id="statusText">未连接</span>
         </div>
+        <div style="font-size:11px;color:#555;margin-top:6px;line-height:1.5;">
+            下行 <code>xiaoyeziUESTC1147/&lt;ICCID&gt;</code> ｜ 上行 <code>DTU_Topic1147/&lt;ICCID&gt;</code>
+        </div>
     </div>
 
     <div class="card">
@@ -168,7 +171,7 @@
             <button class="led-btn red" onclick="sendCmd('red')">
                 <span class="icon">🔴</span> 红灯
             </button>
-            <button class="led-btn yellow" onclick="sendCmd('blue')">
+            <button class="led-btn yellow" onclick="sendCmd('yellow')">
                 <span class="icon">🟡</span> 黄灯
             </button>
             <button class="led-btn green" onclick="sendCmd('green')">
@@ -178,13 +181,16 @@
                 <span class="icon">⭕</span> 关闭
             </button>
         </div>
+        <div id="devState" style="font-size:13px;color:#888;margin-top:12px;text-align:center;">
+            设备实际：等待回执…
+        </div>
     </div>
 
     <div class="card">
         <div class="card-title">亮度</div>
         <div class="brightness-card">
             <label>亮度</label>
-            <input type="range" id="brightness" min="10" max="255" value="255" oninput="updateBrightness()">
+            <input type="range" id="brightness" min="0" max="255" value="255" oninput="updateBrightness()">
             <span class="brightness-value" id="brightnessValue">255</span>
         </div>
         <div class="quick-actions" style="margin-top: 12px;">
@@ -192,6 +198,17 @@
             <button class="quick-btn" onclick="setBrightness(128)">中</button>
             <button class="quick-btn" onclick="setBrightness(200)">亮</button>
             <button class="quick-btn" onclick="setBrightness(255)">最亮</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">4G 模组电源（PA3）</div>
+        <div class="quick-actions">
+            <button class="quick-btn" onclick="sendCmd('v4g-on')">通电</button>
+            <button class="quick-btn" onclick="sendCmd('v4g-off')">断电</button>
+        </div>
+        <div style="font-size:12px;color:#888;margin-top:10px;line-height:1.5;">
+            断电后模组离线、MQTT 断开，本页收不到状态；重新通电需等注网重连（约 5–15 秒）。
         </div>
     </div>
 
@@ -219,11 +236,18 @@
     <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
     <script>
         const BROKER = 'wss://broker.emqx.io:8084/mqtt';
-        const PUB_TOPIC = 'xiaoyeziUESTC1147';
-        const SUB_TOPIC = 'DTU_Topic1147/+';
+        const PUB_TOPIC = 'xiaoyeziUESTC1147';   // 下行：设备订阅 xiaoyeziUESTC1147/<ICCID>
+        const SUB_TOPIC = 'DTU_Topic1147/+';     // 上行：设备发布 DTU_Topic1147/<ICCID>
+        // GitHub Pages 是纯静态站点，没有 /api/devices 后端 —— 在 *.github.io 上直接跳过，
+        // 否则每次加载都会 404（控制台报错 + 白等一次请求）。本地起后端时才用 API。
+        const HAS_BACKEND = !/\.github\.io$/i.test(location.hostname);
         const API_BASE = window.location.origin;
         let client = null, isConnected = false, deviceId = '';
         let devices = [];
+        let currentColor = null;   // 当前点亮的颜色：拖亮度条时据此决定改哪路灯
+        let brightTimer = null;    // 亮度节流定时器（拖动时别把 MQTT 打爆）
+        let v4gOn = true;          // 4G 模组电源本地视图（PA3）
+        let lastAck = null;        // 最近一次设备回执（用于"实际亮度"回显）
         const DEFAULT_DEVICES = [
             { name: '车牌', id: '898608961026C0241530', fixed: true },
             { name: 'PC13灯', id: '89860812192380777549', fixed: true },
@@ -231,10 +255,12 @@
         ];
 
         async function loadDevices() {
-            try {
-                const r = await fetch(API_BASE + '/api/devices');
-                if (r.ok) { devices = await r.json(); return; }
-            } catch(e) {}
+            if (HAS_BACKEND) {
+                try {
+                    const r = await fetch(API_BASE + '/api/devices');
+                    if (r.ok) { devices = await r.json(); return; }
+                } catch(e) {}
+            }
             try { devices = JSON.parse(localStorage.getItem('led_devices')) || []; }
             catch(e) { devices = []; }
             // merge defaults by name (fixed devices always taken from code, so a
@@ -247,6 +273,7 @@
         }
         async function saveDevices() {
             localStorage.setItem('led_devices', JSON.stringify(devices));
+            if (!HAS_BACKEND) return;
             try {
                 await fetch(API_BASE + '/api/devices', {
                     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -359,11 +386,19 @@
                 });
 
                 client.on('message', (topic, message) => {
+                    const raw = message.toString().trim();
+                    // 固件每 60s 做链路探活（+++ / AT+ENTM），这两个字节会被模组当透传
+                    // 数据 publish 到上行主题 —— 是噪声，直接忽略
+                    if (raw === '+++' || raw === 'AT+ENTM') {
+                        log('忽略(探活噪声): ' + raw, 'time'); return;
+                    }
                     try {
-                        const data = JSON.parse(message.toString());
+                        const data = JSON.parse(raw);
                         log('收到: ' + JSON.stringify(data), 'recv');
+                        // 设备回执 {"cmd":"red","status":"ok","bright":64}
+                        if (data.status === 'ok') updateDeviceState(data);
                     } catch (e) {
-                        log('收到: ' + message.toString(), 'recv');
+                        log('收到: ' + raw, 'recv');
                     }
                 });
 
@@ -387,33 +422,83 @@
             log('已断开', 'time');
         }
 
+        // cmd: red | yellow | green | off | v4g-on | v4g-off
         function sendCmd(cmd) {
             if (!isConnected || !client) { log('未连接', 'err'); return; }
-            const bright = parseInt(document.getElementById('brightness').value);
             const targetId = document.getElementById('deviceId').value.trim();
             if (!targetId) { log('请输入设备号', 'err'); return; }
             deviceId = targetId;
-            const msg = JSON.stringify({ cardID: deviceId, cmd: cmd, bright: bright });
+            const bright = parseInt(document.getElementById('brightness').value);
+
+            let msg, tag;
+            if (cmd === 'v4g-on' || cmd === 'v4g-off') {
+                const state = (cmd === 'v4g-on') ? 'on' : 'off';
+                msg = JSON.stringify({ cardID: deviceId, cmd: 'v4g', state: state });
+                tag = '4G 电源 ' + (state === 'on' ? '通电' : '断电');
+                v4gOn = (state === 'on');
+            } else {
+                // ★ 用固件主推的 Web 格式 {"cmd":"led","color":X,"state":"on|off","bright":0-255}
+                // main.c 里这条走 is_web_led 分支，跳过 ICCID 匹配校验，最稳。
+                // （旧格式 {cardID,cmd,bright} 也能用，但依赖 payload 里出现 ICCID 才 match）
+                if (cmd === 'off') {
+                    msg = JSON.stringify({ cmd: 'led', color: currentColor || 'red', state: 'off' });
+                    tag = '关灯';
+                    currentColor = null;              // 关灯后亮度条不再自动下发
+                } else {
+                    msg = JSON.stringify({ cmd: 'led', color: cmd, state: 'on', bright: bright });
+                    tag = (cmd === 'yellow' ? '黄灯' : cmd === 'green' ? '绿灯' : '红灯')
+                          + ' @亮度' + bright;
+                    currentColor = cmd;               // 记住当前色，供亮度条实时调光
+                }
+            }
             client.publish(PUB_TOPIC + '/' + deviceId, msg, { qos: 0 }, (err) => {
                 if (err) log('发送失败: ' + err.message, 'err');
-                else { log('发送: ' + cmd + ' (' + bright + ') → ' + deviceId, 'sent'); highlightBtn(cmd); }
+                else { log('发送: ' + tag + ' → ' + deviceId, 'sent'); highlightBtn(cmd); }
             });
         }
 
         function highlightBtn(cmd) {
             document.querySelectorAll('.led-btn').forEach(b => b.classList.remove('active'));
+            if (cmd === 'v4g-on' || cmd === 'v4g-off') return;   // 电源开关不影响灯键高亮
             const map = { red: 0, yellow: 1, green: 2, off: 3 };
             const btns = document.querySelectorAll('.led-btn');
             if (map[cmd] !== undefined && btns[map[cmd]]) btns[map[cmd]].classList.add('active');
         }
 
         function updateBrightness() {
-            document.getElementById('brightnessValue').textContent = document.getElementById('brightness').value;
+            const v = document.getElementById('brightness').value;
+            document.getElementById('brightnessValue').textContent = v;
+            // 拖动即实时改当前色亮度（节流 150ms）；没有点亮颜色时不发
+            if (!currentColor || !isConnected) return;
+            clearTimeout(brightTimer);
+            brightTimer = setTimeout(() => sendCmd(currentColor), 150);
         }
 
         function setBrightness(val) {
             document.getElementById('brightness').value = val;
-            updateBrightness();
+            document.getElementById('brightnessValue').textContent = val;
+            if (currentColor && isConnected) sendCmd(currentColor);   // 快捷档位立即生效
+        }
+
+        // 设备回执 {"cmd":"red","status":"ok","bright":64} -> 回显"设备实际状态"
+        // 这是"命令真的生效了"的凭据（固件在 LED_SetColor 之后才发这条）
+        function updateDeviceState(a) {
+            const el = document.getElementById('devState');
+            if (el) {
+                const nameMap = { red:'红灯', yellow:'黄灯', green:'绿灯',
+                                  off:'已关灯', sleep:'休眠中', v4g:'4G 电源已切换' };
+                const c = nameMap[a.cmd] || a.cmd;
+                el.textContent = '设备实际：' + c
+                    + (a.bright !== undefined ? '  亮度 ' + a.bright : '');
+            }
+            // 用设备真实亮度校正滑块（别人改过 / 换了浏览器时能对上）
+            if (a.bright !== undefined && ['red','yellow','green'].includes(a.cmd)) {
+                const s = document.getElementById('brightness');
+                if (s && parseInt(s.value) !== a.bright) {
+                    s.value = a.bright;
+                    document.getElementById('brightnessValue').textContent = a.bright;
+                }
+            }
         }
 
         function setStatus(state) {
