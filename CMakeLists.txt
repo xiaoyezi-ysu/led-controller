@@ -48,6 +48,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/sc7a20h.c
     Core/Src/iccid_storage.c
     Core/Src/dtu.c
+    Core/Src/board_io.c
 )
 
 # Add include paths

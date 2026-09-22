@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "board_config.h"
+#include "board_io.h"
 #include "dtu.h"
 /* USER CODE END Includes */
 
@@ -70,6 +71,16 @@ static volatile uint8_t rbuf[RBUF_SIZE];
 static volatile uint16_t rbuf_wr = 0;
 static uint16_t rbuf_rd = 0;
 volatile uint8_t dbg_trigger = 0;   /* COM21 收到 '~' 时置位，主循环执行调试探针 */
+
+/* SWD 调试注入通道 -----------------------------------------------------------
+   脚本用 SWD 写 g_dbg_tx[] 再写 g_dbg_tx_len，主循环把这段字节**一次性**发给 4G 模组。
+   为什么需要它：没有 PC 调试串口时，只能用 SWD 逐字节写 USART1->DR 来对模组说话，
+   但那样每字节之间会插进 200~400us 的 SWD 事务空隙，足以把银尔达的
+   "config,get,xxx\r\n" 整条命令切碎成多帧 —— 模组按帧识别，于是「发了但没反应」。
+   交给 HAL_UART_Transmit 连续发送才能形成完整命令帧。
+   模组的应答仍走正常 UART 中断 -> rbuf / json_buf，脚本照旧读得到。 */
+volatile uint8_t g_dbg_tx[128];
+volatile uint8_t g_dbg_tx_len = 0;
 uint8_t g_low_power = 0;            /* 1=睡眠模式：STM32 深度空闲，仅被 4G 模组 UART 唤醒；
                                          模组维持 MQTT 连接，LED 已熄灭 */
 
@@ -103,6 +114,22 @@ static void SC7A20H_ReadAccel(int16_t *x, int16_t *y, int16_t *z);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* 从 JSON 文本里取整数键值：{"bright":180} → 180。
+   工程里没有 JSON 库（DTU 侧同样是字符串匹配风格），这里做个最小实现：
+   定位 "\"key\"" 后跳过空白/冒号/引号，再 atoi；取不到或越界时返回 def。 */
+static int json_int(const char *json, const char *key, int def, int lo, int hi)
+{
+  const char *p = strstr(json, key);
+  if (p == NULL) return def;
+  p += strlen(key);
+  while (*p == ' ' || *p == ':' || *p == '\t') p++;
+  if (*p < '0' || *p > '9') return def;
+  int v = atoi(p);
+  if (v < lo) v = lo;
+  if (v > hi) v = hi;
+  return v;
+}
 
 /* USER CODE END 0 */
 
@@ -141,22 +168,19 @@ int main(void)
 
   /* SC7A20H disabled for debug */
 
-  HAL_UART_Receive_IT(&UART_4G, &RX_BYTE_4G, 1);
-  HAL_UART_Receive_IT(&UART_PC, &RX_BYTE_PC, 1);
-
-  /* Init LED per board config */
-  {
-    GPIO_InitTypeDef led = {0};
-    led.Pin = LED_ALL;
-    led.Mode = GPIO_MODE_OUTPUT_PP;
-    led.Pull = GPIO_NOPULL;
-    led.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(LED_PORT, &led);
-    HAL_GPIO_WritePin(LED_PORT, LED_ALL, LED_GPIO_OFF);
-  }
+  /* 4G 模组电源必须最先拉起来：外部 100kΩ 下拉使复位后 V4G 默认断电，
+     模组上电到注网要几秒，早通电才能早连上 MQTT。 */
+  V4G_Init();
 
   /* Print banner */
   printf("\r\n=== STM32 4G LED Controller ===\r\n");
+  printf("V4G(PA3) = %s  (4G module power)\r\n", V4G_Get() ? "ON" : "OFF");
+
+  HAL_UART_Receive_IT(&UART_4G, &RX_BYTE_4G, 1);
+  HAL_UART_Receive_IT(&UART_PC, &RX_BYTE_PC, 1);
+
+  /* LED：车牌板 = TIM3 三路 PWM 调光；最小板 = PC13 GPIO 开关 */
+  LED_Init();
 
   DTU_Init();
 
@@ -173,6 +197,14 @@ int main(void)
     if (g_low_power) HAL_SuspendTick(); else HAL_ResumeTick();
     __WFI();
     uint32_t now = HAL_GetTick();
+
+    /* SWD 注入：脚本写入的命令原样转给 4G 模组（见 g_dbg_tx 注释） */
+    if (g_dbg_tx_len)
+    {
+      uint8_t n = g_dbg_tx_len;
+      g_dbg_tx_len = 0;
+      HAL_UART_Transmit(&UART_4G, (uint8_t *)g_dbg_tx, n, 500);
+    }
 
     /* SC7A20H every 500ms (disabled for 4G debug) */
     if (0 && now - last_tick >= 500)
@@ -233,108 +265,124 @@ int main(void)
            防止模组自回显(如心跳 ready、探针 +++)被当成指令解析后，
            因默认值 "off" 而自动刷 {"cmd":"off","status":"ok"}。 */
         const char *ack_cmd = NULL;
+        uint8_t ack_bright = 0;
+
+        /* 亮度字段（Web 端 bright，0..255）。缺省给最大亮度，保持旧版"非暗即亮"行为 */
+        int bright = json_int((const char*)json_buf, "\"bright\"", LED_BRIGHT_MAX, 0, LED_BRIGHT_MAX);
+
         /* 睡眠命令：关灯 + 进入 STM32 低功耗；4G 模组照常维持 MQTT 连接 */
         if (strstr((char*)json_buf, "\"cmd\":\"sleep\"") || strstr((char*)json_buf, "\"cmd\": \"sleep\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_ALL, LED_GPIO_OFF);
+          LED_AllOff();
           g_low_power = 1;
           DTU_SetLowPower(1);
           printf("LP: SLEEP (LED off, module keeps MQTT)\r\n");
           ack_cmd = "sleep";
         }
-      #ifdef LICENSE_PLATE_BOARD
-        if (is_web_led)
+        /* 4G 模组电源开关：{"cmd":"v4g","state":"on|off"}；不带 state 则翻转（便于手工调试） */
+        else if (strstr((char*)json_buf, "\"cmd\":\"v4g\"") || strstr((char*)json_buf, "\"cmd\": \"v4g\""))
         {
-          /* Web App 格式：{"cmd":"led","color":"red|blue|green","state":"on|off"} */
+          int on;
+          if (strstr((char*)json_buf, "\"state\":\"off\"") || strstr((char*)json_buf, "\"state\": \"off\""))
+            on = 0;
+          else if (strstr((char*)json_buf, "\"state\":\"on\"") || strstr((char*)json_buf, "\"state\": \"on\""))
+            on = 1;
+          else
+            on = !V4G_Get();
+          V4G_Set((uint8_t)on);
+          printf("V4G(PA3): %s\r\n", on ? "ON  -> 4G module powered" : "OFF -> 4G module cut");
+          ack_cmd = "v4g";
+        }
+      #ifdef LICENSE_PLATE_BOARD
+        else if (is_web_led)
+        {
+          /* Web App 格式：{"cmd":"led","color":"red|yellow|green","state":"on|off","bright":0-255}
+             （"blue" 作为黄色的历史别名继续兼容） */
           int led_on = (strstr((char*)json_buf, "\"state\":\"on\"") != NULL) ||
                        (strstr((char*)json_buf, "\"state\": \"on\"") != NULL);
           if (!led_on)
           {
-            HAL_GPIO_WritePin(LED_PORT, LED_ALL, LED_GPIO_OFF);
+            LED_AllOff();
             printf("LED: ALL OFF\r\n");
             ack_cmd = "off";
           }
-          else if (strstr((char*)json_buf, "\"color\":\"red\"") || strstr((char*)json_buf, "\"color\": \"red\""))
-          {
-            HAL_GPIO_WritePin(LED_PORT, LED_RED_PIN, LED_GPIO_ON);
-            printf("LED: RED ON\r\n");
-            ack_cmd = "red";
-          }
-          else if (strstr((char*)json_buf, "\"color\":\"blue\"") || strstr((char*)json_buf, "\"color\": \"blue\""))
-          {
-            HAL_GPIO_WritePin(LED_PORT, LED_YEL_PIN, LED_GPIO_ON);
-            printf("LED: YELLOW ON\r\n");
-            ack_cmd = "yellow";
-          }
-          else if (strstr((char*)json_buf, "\"color\":\"green\"") || strstr((char*)json_buf, "\"color\": \"green\""))
-          {
-            HAL_GPIO_WritePin(LED_PORT, LED_GRN_PIN, LED_GPIO_ON);
-            printf("LED: GREEN ON\r\n");
-            ack_cmd = "green";
-          }
           else
           {
-            /* 未指定颜色时默认红灯 */
-            HAL_GPIO_WritePin(LED_PORT, LED_RED_PIN, LED_GPIO_ON);
-            printf("LED: RED ON\r\n");
-            ack_cmd = "red";
+            uint8_t color = LED_COLOR_RED;    /* 未指定颜色 → 默认红灯（保持旧行为） */
+            if (strstr((char*)json_buf, "\"color\":\"yellow\"") || strstr((char*)json_buf, "\"color\": \"yellow\"") ||
+                strstr((char*)json_buf, "\"color\":\"blue\"")   || strstr((char*)json_buf, "\"color\": \"blue\""))
+              color = LED_COLOR_YELLOW;
+            else if (strstr((char*)json_buf, "\"color\":\"green\"") || strstr((char*)json_buf, "\"color\": \"green\""))
+              color = LED_COLOR_GREEN;
+
+            LED_SetColor(color, (uint8_t)bright);
+            ack_bright = (uint8_t)bright;
+            printf("LED: %s ON @ bright=%d\r\n",
+                   color == LED_COLOR_YELLOW ? "YELLOW" : (color == LED_COLOR_GREEN ? "GREEN" : "RED"), bright);
+            ack_cmd = (color == LED_COLOR_YELLOW) ? "yellow" : (color == LED_COLOR_GREEN ? "green" : "red");
           }
         }
         else if (strstr((char*)json_buf, "\"cmd\":\"red\"") || strstr((char*)json_buf, "\"cmd\": \"red\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_RED_PIN, LED_GPIO_ON);
-          printf("LED: RED ON\r\n");
+          LED_SetColor(LED_COLOR_RED, (uint8_t)bright);
+          ack_bright = (uint8_t)bright;
+          printf("LED: RED ON @ bright=%d\r\n", bright);
           ack_cmd = "red";
         }
-        else if (strstr((char*)json_buf, "\"cmd\":\"blue\"") || strstr((char*)json_buf, "\"cmd\": \"blue\""))
+        else if (strstr((char*)json_buf, "\"cmd\":\"yellow\"") || strstr((char*)json_buf, "\"cmd\": \"yellow\"") ||
+                 strstr((char*)json_buf, "\"cmd\":\"blue\"")   || strstr((char*)json_buf, "\"cmd\": \"blue\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_YEL_PIN, LED_GPIO_ON);
-          printf("LED: YELLOW ON\r\n");
+          LED_SetColor(LED_COLOR_YELLOW, (uint8_t)bright);
+          ack_bright = (uint8_t)bright;
+          printf("LED: YELLOW ON @ bright=%d\r\n", bright);
           ack_cmd = "yellow";
         }
         else if (strstr((char*)json_buf, "\"cmd\":\"green\"") || strstr((char*)json_buf, "\"cmd\": \"green\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_GRN_PIN, LED_GPIO_ON);
-          printf("LED: GREEN ON\r\n");
+          LED_SetColor(LED_COLOR_GREEN, (uint8_t)bright);
+          ack_bright = (uint8_t)bright;
+          printf("LED: GREEN ON @ bright=%d\r\n", bright);
           ack_cmd = "green";
         }
         else if (strstr((char*)json_buf, "\"cmd\":\"off\"") || strstr((char*)json_buf, "\"cmd\": \"off\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_ALL, LED_GPIO_OFF);
+          LED_AllOff();
           printf("LED: ALL OFF\r\n");
           ack_cmd = "off";
         }
       #else
         if (strstr((char*)json_buf, "\"cmd\":\"pc13\"") || strstr((char*)json_buf, "\"cmd\": \"pc13\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_GRN_PIN, LED_GPIO_ON);
+          LED_SetColor(LED_COLOR_GREEN, (uint8_t)bright);
           printf("PC13: ON (green)\r\n");
           ack_cmd = "on";
         }
         else if (strstr((char*)json_buf, "\"cmd\":\"pc13off\"") || strstr((char*)json_buf, "\"cmd\": \"pc13off\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_GRN_PIN, LED_GPIO_OFF);
+          LED_AllOff();
           printf("PC13: OFF\r\n");
           ack_cmd = "off";
         }
         else if (strstr((char*)json_buf, "\"cmd\":\"green\"") || strstr((char*)json_buf, "\"cmd\": \"green\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_GRN_PIN, LED_GPIO_ON);
+          LED_SetColor(LED_COLOR_GREEN, (uint8_t)bright);
           printf("LED: GREEN (PC13 ON)\r\n");
           ack_cmd = "on";
         }
         else if (strstr((char*)json_buf, "\"cmd\":\"off\"") || strstr((char*)json_buf, "\"cmd\": \"off\""))
         {
-          HAL_GPIO_WritePin(LED_PORT, LED_GRN_PIN, LED_GPIO_OFF);
+          LED_AllOff();
           printf("LED: OFF\r\n");
           ack_cmd = "off";
         }
       #endif
-        /* ACK: 仅当 ack_cmd 被具体指令赋值时才回（unknown 消息静默，避免自动刷 off） */
+        /* ACK: 仅当 ack_cmd 被具体指令赋值时才回（unknown 消息静默，避免自动刷 off）
+           bright 一并回报，方便 Web 端确认亮度真的下发生效 */
         if (ack_cmd != NULL)
         {
-          char ack[64];
-          int n = snprintf(ack, sizeof(ack), "{\"cmd\":\"%s\",\"status\":\"ok\"}", ack_cmd);
+          char ack[96];
+          int n = snprintf(ack, sizeof(ack), "{\"cmd\":\"%s\",\"status\":\"ok\",\"bright\":%d}",
+                           ack_cmd, ack_bright);
           if (n > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)ack, n, 200);
         }
       }
@@ -563,27 +611,33 @@ static void MX_GPIO_Init(void)
 
   /* Unused pins → analog input for minimum power (dig. input disabled) */
 
-  /* GPIOA: PA0, PA1, PA3-PA8, PA11, PA12, PA15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_3 | GPIO_PIN_4
-                      | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7 | GPIO_PIN_8
+  /* GPIOA: 已交给外设/输出的脚**不配 ANALOG**：
+       PA3     = V4G 4G 模组电源（board_io.c: V4G_Init）
+       PA6/PA7 = TIM3_CH1/CH2 LED 红/黄（board_io.c: LED_Init） */
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_4
+                      | GPIO_PIN_5 | GPIO_PIN_8
                       | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /* GPIOB: unused pins → analog input */
+  /* GPIOB: unused pins → analog input。
+     PB0 = LED 绿灯(TIM3_CH3)，必须排除；
+     旧版 LED 脚 PB12/13/14 已弃用，回收为 ANALOG 省电 */
   {
-    uint16_t pb_all = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_3 | GPIO_PIN_4
+    uint16_t pb_all = GPIO_PIN_1 | GPIO_PIN_3 | GPIO_PIN_4
                     | GPIO_PIN_5 | GPIO_PIN_8 | GPIO_PIN_9
                     | GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
   #ifdef LICENSE_PLATE_BOARD
-    /* Exclude LED/PWM pins (configured in LED init or TIM1 MSP) */
-    pb_all &= ~(LED_ALL);
+    pb_all &= (uint16_t)~(LED_GRN_PIN);     /* PB0 = TIM3_CH3 */
   #endif
-    GPIO_InitStruct.Pin = pb_all;
-    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    if (pb_all)
+    {
+      GPIO_InitStruct.Pin = pb_all;
+      GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+      GPIO_InitStruct.Pull = GPIO_NOPULL;
+      HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    }
   }
 
   /* GPIOC: PC13 */
@@ -645,10 +699,26 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   }
   else if (huart->Instance == _PC_INST)
   {
-    /* PC→4G: forward byte to 4G UART；'~' 触发调试探针，不转发 */
+    /* PC→4G 透传；以下按键被本地拦下做调试，不转发给 4G 模组：
+       '~' = 触发 DTU 调试探针
+       'v' = 翻转 4G 模组电源 (PA3/V4G)
+             —— 4G 一旦断电 MQTT 也断了，所以必须留一个**独立于 4G 链路**的验证入口
+       'p' = 打印 PA3 电平与三路 LED 当前亮度 */
     if (RX_BYTE_PC == '~')
     {
       dbg_trigger = 1;
+    }
+    else if (RX_BYTE_PC == 'v' || RX_BYTE_PC == 'V')
+    {
+      uint8_t on = (uint8_t)(!V4G_Get());
+      V4G_Set(on);
+      printf("V4G(PA3) -> %s\r\n", on ? "ON  (4G powered)" : "OFF (4G cut)");
+    }
+    else if (RX_BYTE_PC == 'p' || RX_BYTE_PC == 'P')
+    {
+      printf("STAT: V4G(PA3)=%u  LED R=%u Y=%u G=%u\r\n", V4G_Get(),
+             LED_GetBright(LED_COLOR_RED), LED_GetBright(LED_COLOR_YELLOW),
+             LED_GetBright(LED_COLOR_GREEN));
     }
     else
     {
