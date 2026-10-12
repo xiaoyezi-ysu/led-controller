@@ -14,4 +14,7 @@ void    SC7A20H_SoftI2C_Init(void);
 signed char SC7A20H_Driver_Init(SC7A20H_Interface_t interface);
 unsigned char SC7A20H_Read_FIFO_Buf(SC7A20H_Interface_t interface, signed short *x_buf, signed short *y_buf, signed short *z_buf);
 
+/* 单次读最新一组加速度（不碰 FIFO），返回 0=成功 */
+int     SC7A20H_ReadXYZ(int16_t *x, int16_t *y, int16_t *z);
+
 #endif

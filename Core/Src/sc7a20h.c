@@ -112,6 +112,19 @@ static int I2C_ReadRegs(uint8_t dev_addr, uint8_t reg, uint8_t len, uint8_t *buf
 
 void SC7A20H_SoftI2C_Init(void)
 {
+    GPIO_InitTypeDef g;
+
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    /* 必须配成**开漏**：SDA 要能读回真实线电平。推挽输出时 HAL_GPIO_ReadPin
+       读的是输出锁存器而非总线电平，从机拉低时主机会误判为高 -> 永远读不到 ACK。
+       开漏 + 上拉（板载 4.7k，另开内部弱上拉兜底）才是标准 I2C 电气。 */
+    g.Pin   = I2C_SCL_PIN | I2C_SDA_PIN;
+    g.Mode  = GPIO_MODE_OUTPUT_OD;
+    g.Pull  = GPIO_PULLUP;
+    g.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOB, &g);
+
     SDA_HIGH();
     SCL_HIGH();
 }
@@ -130,8 +143,12 @@ static unsigned char SL_SC7A20H_INIT_REG1[SL_SC7A20H_INIT_REG1_NUM*3]=
     0x20,0x47,0x00,
     0x21,0x70,0x00,
     0x23,0x98,0x00,
-    0x24,0x40,0x00,
-    0x2E,0x4F,0x00,
+    /* ★ 不要开 FIFO！原厂表是 0x24=0x40(FIFO_EN=1) + 0x2E=0x4F(FMD=Stream)，
+       而本工程用的是 SC7A20H_ReadXYZ() 直读 OUT 寄存器。FIFO 使能时 OUT 区被
+       FIFO 引擎接管，直读会永远拿到同一组锁存值（实测 10s/259 次读取 0 变化）；
+       切回 Bypass 后立刻恢复逐次刷新（268 次读取 267 次变化）。 */
+    0x24,0x00,0x00,
+    0x2E,0x00,0x00,
 };
 
 signed char SC7A20H_Driver_Init(SC7A20H_Interface_t interface)
@@ -182,4 +199,21 @@ unsigned char SC7A20H_Read_FIFO_Buf(SC7A20H_Interface_t interface, signed short 
     I2C_WriteReg(SC7A20H_I2C_ADDR, SL_SC7A20H_FIFO_CTRL_REG, 0X4F);
 
     return SL_FIFO_ACCEL_NUM;
+}
+
+int SC7A20H_ReadXYZ(int16_t *x, int16_t *y, int16_t *z)
+{
+    unsigned char b[6] = {0};
+
+    /* 直接读 OUT_X_L..OUT_Z_H 六字节，绕开 FIFO。
+       SC7A20H_Read_FIFO_Buf() 在 FIFO 满时一次吐 32 组，软 I2C 下要几十 ms，
+       会明显拖住主循环；姿态检测只要最新一组，读寄存器就够了。
+       (0xA8 自带 bit7=1，即多字节读地址自增) */
+    if (I2C_ReadRegs(SC7A20H_I2C_ADDR, SL_SC7A20H_IIC_OUT_X_L, 6, b))
+        return 1;
+
+    *x = (int16_t)(((uint16_t)b[1] << 8) | b[0]);
+    *y = (int16_t)(((uint16_t)b[3] << 8) | b[2]);
+    *z = (int16_t)(((uint16_t)b[5] << 8) | b[4]);
+    return 0;
 }

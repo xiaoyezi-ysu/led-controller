@@ -27,6 +27,8 @@
 #include "board_config.h"
 #include "board_io.h"
 #include "dtu.h"
+#include "sc7a20h.h"
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -91,12 +93,36 @@ extern _4G_State _4g_state;
 extern char my_iccid[32];
 extern uint8_t iccid_loaded;
 
+/* SC7A20H 姿态传感器（软 I2C: PB6=SCL, PB7=SDA）
+   全部放 volatile 全局 —— 没有 PC 调试串口时，用 SWD 直接读这些地址
+   （同 g_dbg_tx 的思路；符号地址用 arm-none-eabi-nm 查）。
+   g_sc7_id 是总开关：非 0x11 时主循环跳过整个读数分支，
+   所以想临时关掉传感器，只需在 init 处不调用 Driver_Init 即可。 */
+volatile uint8_t  g_sc7_id  = 0;    /* Driver_Init 返回：0x11 = 芯片就绪/应答正常 */
+volatile uint8_t  g_sc7_ok  = 0;    /* 1 = 最近一次读数有效 */
+volatile uint8_t  g_sc7_err = 0;    /* 累计 I2C 读失败次数 */
+volatile int16_t  g_sc7_x = 0, g_sc7_y = 0, g_sc7_z = 0;   /* 原始加速度 LSB */
+volatile int16_t  g_sc7_roll  = 0;  /* 横滚角 roll，单位 0.1°（绕 X 轴） */
+volatile int16_t  g_sc7_pitch = 0;  /* 俯仰角 pitch，单位 0.1°（绕 Y 轴） */
+volatile uint16_t g_sc7_cnt   = 0;  /* 成功读取累计次数 */
+
 /* MQTT JSON receive buffer */
 #define JSON_BUF_SIZE  256
 uint8_t json_buf[JSON_BUF_SIZE];
 uint16_t json_len = 0;
 volatile uint8_t json_ready = 0;
 volatile uint32_t json_last_rx = 0;
+
+/* 延时 ACK --------------------------------------------------------------
+   银尔达 DTU 透传固件在向 MCU 下发服务器数据后的短时间内会丢弃 MCU 立刻回发
+   的数据：实测「紧接下行发出的 ACK 永远到不了 MQTT」，而内容完全相同的字节
+   晚一点再发就能正常上报（伪造 json_ready 触发 ACK 可立即上报即为反证）。
+   所以 ACK 不再当场发送，而是排进队列，等 ACK_DELAY_MS 之后再发。
+   等待期间若又来新指令，直接覆盖旧 ACK —— 拖动亮度滑块连发时只保留最后一条。 */
+#define ACK_DELAY_MS   800u
+static char     g_ack_buf[96];
+static uint32_t g_ack_at = 0;
+static uint8_t  g_ack_pending = 0;
 
 /* USER CODE END PV */
 
@@ -166,7 +192,12 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  /* SC7A20H disabled for debug */
+  /* SC7A20H 姿态传感器（软 I2C: PB6=SCL, PB7=SDA）。
+     硬件 I2C1 版(hi2c1) 与 MX_I2C1_Init 保留未用 —— 实测软 I2C 更省心：
+     不占外设、引脚任意、失败也能逐拍观察。 */
+  g_sc7_id = (uint8_t)SC7A20H_Driver_Init(SC7A20H_INTERFACE_I2C);
+  printf("SC7A20H: id=0x%02X (%s)\r\n", g_sc7_id,
+         g_sc7_id == 0x11 ? "OK" : "NOT FOUND -> check PB6/PB7 & pull-ups");
 
   /* 4G 模组电源必须最先拉起来：外部 100kΩ 下拉使复位后 V4G 默认断电，
      模组上电到注网要几秒，早通电才能早连上 MQTT。 */
@@ -188,8 +219,7 @@ int main(void)
 
   /* Infinite loop — SysTick wakes every 1ms, WFI sleeps otherwise */
   /* USER CODE BEGIN WHILE */
-  int16_t ax, ay, az;
-  uint32_t last_tick = HAL_GetTick();
+  uint32_t last_sc7 = HAL_GetTick();   /* 上次读姿态的时刻 */
   while (1)
   {
     /* 睡眠模式：挂起 SysTick，让 MCU 真正深度空闲，仅被 UART/RTC 等中断唤醒；
@@ -206,15 +236,41 @@ int main(void)
       HAL_UART_Transmit(&UART_4G, (uint8_t *)g_dbg_tx, n, 500);
     }
 
-    /* SC7A20H every 500ms (disabled for 4G debug) */
-    if (0 && now - last_tick >= 500)
+    /* SC7A20H 姿态：每 500ms 读一次并算倾角。
+       g_sc7_id != 0x11 时整段跳过 -> 传感器不在板子上也不会拖慢主循环。 */
+    if (g_sc7_id == 0x11 && now - last_sc7 >= 500)
     {
-      SC7A20H_ReadAccel(&ax, &ay, &az);
-      printf("X=%6d  Y=%6d  Z=%6d\r\n", ax, ay, az);
-      last_tick = now;
+      int16_t ax, ay, az;
+      last_sc7 = now;
+      if (!SC7A20H_ReadXYZ(&ax, &ay, &az))
+      {
+        g_sc7_x = ax; g_sc7_y = ay; g_sc7_z = az;
+        /* 重力矢量定姿态 -> 只能得 roll / pitch（yaw 要磁力计）。
+           atan2 只用两轴比值，与量程/灵敏度无关，换量程不必改系数。
+           0.1° 单位：180/pi*10 = 572.9578 */
+        g_sc7_roll  = (int16_t)(atan2f((float)ay, (float)az) * 572.9578f);
+        g_sc7_pitch = (int16_t)(atan2f(-(float)ax,
+                             sqrtf((float)ay * (float)ay + (float)az * (float)az)) * 572.9578f);
+        g_sc7_ok = 1;
+        g_sc7_cnt++;
+        if ((g_sc7_cnt & 1) == 0)   /* 每 2 次(≈1s) 打一行，别刷爆串口 */
+          printf("SC7: X=%6d Y=%6d Z=%6d roll=%4d pitch=%4d (0.1deg)\r\n",
+                 ax, ay, az, g_sc7_roll, g_sc7_pitch);
+      }
+      else
+      {
+        g_sc7_err++;
+      }
     }
 
     DTU_Process(now);
+
+    /* 延时 ACK：到点后把排队的 ACK 发给 4G 模组（尾带 \r\n，模组按行打包上报） */
+    if (g_ack_pending && (int32_t)(now - g_ack_at) >= 0)
+    {
+      g_ack_pending = 0;
+      HAL_UART_Transmit(&UART_4G, (uint8_t*)g_ack_buf, (uint16_t)strlen(g_ack_buf), 200);
+    }
 
     if (dbg_trigger)
     {
@@ -377,13 +433,16 @@ int main(void)
         }
       #endif
         /* ACK: 仅当 ack_cmd 被具体指令赋值时才回（unknown 消息静默，避免自动刷 off）
-           bright 一并回报，方便 Web 端确认亮度真的下发生效 */
+           bright 一并回报，方便 Web 端确认亮度真的下发生效。
+           注意：不能立刻发（会落进模组下发后的丢包窗口被丢掉），改为排队延时发送，
+           并补上行尾 \r\n，让模组按完整一行打包上报。 */
         if (ack_cmd != NULL)
         {
-          char ack[96];
-          int n = snprintf(ack, sizeof(ack), "{\"cmd\":\"%s\",\"status\":\"ok\",\"bright\":%d}",
-                           ack_cmd, ack_bright);
-          if (n > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)ack, n, 200);
+          snprintf(g_ack_buf, sizeof(g_ack_buf),
+                   "{\"cmd\":\"%s\",\"status\":\"ok\",\"bright\":%d}\r\n",
+                   ack_cmd, ack_bright);
+          g_ack_at = now + ACK_DELAY_MS;
+          g_ack_pending = 1;
         }
       }
       } /* end: skip echoed ACK (contains "status") */
