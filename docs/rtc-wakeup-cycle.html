@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>RTC 定时唤醒循环 —— Stop 1.05 mA 睡、闹钟自醒、无需外部 RTC</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1e2430; --mut:#6b7280; --line:#e5e8ef;
+    --green:#16a34a; --red:#dc2626; --blue:#2563eb; --purple:#7c3aed; --amber:#d97706;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 4vw;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.6}
+  h1{font-size:24px;margin:0 0 4px}
+  h2{font-size:18px;margin:30px 0 10px;border-left:4px solid var(--blue);padding-left:10px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .lab{font-size:12px;color:var(--mut)}
+  .kpi .val{font-size:24px;font-weight:700;margin-top:2px}
+  .kpi .val small{font-size:13px;font-weight:400;color:var(--mut)}
+  .good{border-left:4px solid var(--green);background:#f0fdf4;border-radius:8px;padding:12px 14px;margin:10px 0}
+  .hl{border-left:4px solid var(--amber);background:#fffbeb;border-radius:8px;padding:12px 14px;margin:10px 0}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+  th{background:#f1f5f9}
+  td.num{font-variant-numeric:tabular-nums;text-align:right}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:13px}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;font-size:13px;line-height:1.5}
+  /* 纯 CSS 时段柱状图 */
+  .bars{display:flex;align-items:flex-end;gap:3px;height:190px;margin:18px 0 6px;padding:0 4px;
+        border-bottom:2px solid var(--line)}
+  .bar{flex:1;position:relative;border-radius:4px 4px 0 0;min-width:8px}
+  .bar span{position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--mut);white-space:nowrap}
+  .b-stop{background:#86efac}
+  .b-sess{background:#f87171}
+  .legend{display:flex;gap:18px;font-size:12.5px;color:var(--mut);margin:6px 0 2px}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:10px 0}
+  .step{background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:9px 13px;font-size:13px}
+  .arr{align-self:center;color:var(--mut);font-size:16px}
+  .mut{color:var(--mut);font-size:12.5px}
+</style>
+</head>
+<body>
+
+<h1>RTC 定时唤醒循环 —— <span style="color:var(--green)">Stop 睡 1.05 mA，闹钟自醒，零外部器件</span></h1>
+<div class="sub">2026-10-13 凌晨实机验证 · 车牌 ver2 · 8 MHz 固件 + lp_cycle 状态机 · F-11 真值表 · period 临时 60 s</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="lab">Stop 睡态电流（F-11 真值）</div><div class="val" style="color:var(--green)">1.04 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">RTC 闹钟唤醒</div><div class="val" style="color:var(--blue)">✓ 自动</div></div>
+  <div class="kpi"><div class="lab">会话时长（含收尾）</div><div class="val">≈95 <small>s</small></div></div>
+  <div class="kpi"><div class="lab">连续循环轮数（验证）</div><div class="val">≥3 <small>轮零干预</small></div></div>
+</div>
+
+<h2>1. 结论先说</h2>
+<div class="card">
+  <div class="good">
+    <b>F103 内部 RTC 完全胜任「Stop 定时唤醒」，不需要外部 RTC 芯片。</b><br>
+    LSE 32.768 kHz 在 VBAT 域，Stop / SW4 复位 / 掉电期间照跑；RTC 闹钟经 EXTI Line17 唤醒 Stop，
+    唤醒后重配时钟、4G 上电、上报、授时尝试、挂下一闹钟、再睡——<b>全流程闭环、没变砖、无需人工干预</b>。
+  </div>
+  <div class="hl">
+    <b>授时现状：</b>银尔达透传固件<b>不支持</b> <code>AT+CCLK</code>（那是飞思创 AT 固件的指令），
+    授时探测每轮安全失败、不影响定时。两条路补授时：
+    ① 服务器下发 <code>{"cmd":"time","epoch":..}</code>（已实现）；
+    ② 切 <code>MODULE_FSC_AT</code> 用飞思创 AT 固件（其手册 3.1.22 自带 NTP 授时）。
+  </div>
+</div>
+
+<h2>2. 工作循环</h2>
+<div class="card">
+  <div class="flow">
+    <div class="step"><b>RTC 闹钟</b><br><span class="mut">EXTI17 唤醒 Stop</span></div><div class="arr">→</div>
+    <div class="step"><b>重配时钟 + 4G 上电</b><br><span class="mut">Stop 退出 SYSCLK=HSI，必须 SystemClock_Config</span></div><div class="arr">→</div>
+    <div class="step"><b>会话 ≤90 s</b><br><span class="mut">注网 MQTT + 发 report + 可授时</span></div><div class="arr">→</div>
+    <div class="step"><b>收尾</b><br><span class="mut">+++ / CCLK? / ENTM → 挂闹钟 → 关 4G</span></div><div class="arr">→</div>
+    <div class="step"><b>Stop</b><br><span class="mut">≈1.04 mA，等下一闹钟</span></div>
+  </div>
+  <div class="mut">入睡前闹钟挂不成功会拒绝入睡（保持在线）；<code>g_lp_cycle</code> 是 RAM 变量，复位后回到普通在线模式——固件永远留着一条已知好的启动路径，这就是防变砖。</div>
+</div>
+
+<h2>3. 实测电流曲线（F-11，180 s，period=60 s 的测试周期）</h2>
+<div class="card">
+  <div class="bars">
+    <div class="bar b-stop" style="height:2%"><span>1.06</span></div>
+    <div class="bar b-stop" style="height:2%"><span>1.05</span></div>
+    <div class="bar b-stop" style="height:2%"><span>1.05</span></div>
+    <div class="bar b-stop" style="height:2%"><span>1.04</span></div>
+    <div class="bar b-sess" style="height:14%"><span>10.3↑</span></div>
+    <div class="bar b-sess" style="height:78%"><span>57.3</span></div>
+    <div class="bar b-sess" style="height:83%"><span>60.4</span></div>
+    <div class="bar b-sess" style="height:81%"><span>59.7</span></div>
+    <div class="bar b-sess" style="height:81%"><span>59.1</span></div>
+    <div class="bar b-sess" style="height:82%"><span>59.8</span></div>
+    <div class="bar b-sess" style="height:82%"><span>60.0</span></div>
+    <div class="bar b-sess" style="height:78%"><span>58.9</span></div>
+    <div class="bar b-sess" style="height:79%"><span>58.0</span></div>
+    <div class="bar b-stop" style="height:2%"><span>1.07</span></div>
+    <div class="bar b-stop" style="height:2%"><span>1.07</span></div>
+    <div class="bar b-stop" style="height:2%"><span>1.05</span></div>
+    <div class="bar b-stop" style="height:2%"><span>1.04</span></div>
+    <div class="bar b-stop" style="height:2%"><span>1.04</span></div>
+  </div>
+  <div class="legend">
+    <span><span class="dot" style="background:#86efac"></span>Stop 睡态（≈1.05 mA，每格 = 10 s）</span>
+    <span><span class="dot" style="background:#f87171"></span>4G 会话（注网/MQTT，59–60 mA，DRX 13↔80 振荡）</span>
+  </div>
+  <table>
+    <thead><tr><th>时段</th><th>状态</th><th class="num">电流（中位）</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>0–45 s</td><td><b>Stop 睡态</b></td><td class="num">1.03–1.07 mA</td><td>SLEEPDEEP+WFI，仅 RTC 闹钟能醒；比 §14 的 1.162 更低（全静默）</td></tr>
+      <tr><td>≈48 s</td><td><b>RTC 闹钟唤醒</b></td><td class="num">—</td><td>零人工干预，EXTI17 → 时钟重配 → V4G=1</td></tr>
+      <tr><td>50–142 s</td><td>4G 会话</td><td class="num">~59.5 mA</td><td>注网成功（13↔80 mA DRX 节拍）；90 s 超时 + 收尾 ≈95 s</td></tr>
+      <tr><td>≈142 s 起</td><td>自动收尾 → Stop</td><td class="num">1.04–1.07 mA</td><td>循环继续，≥3 轮无故障</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>4. 平均电流账（会话 95 s @59.4 + 睡态 1.05 mA）</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>上报周期</th><th class="num">平均电流（当前会话 95 s）</th><th class="num">会话缩到 ~50 s 后</th></tr></thead>
+    <tbody>
+      <tr><td>30 min</td><td class="num">≈4.1 mA</td><td class="num">≈2.7 mA</td></tr>
+      <tr><td>1 h</td><td class="num">≈2.4 mA</td><td class="num">≈1.9 mA</td></tr>
+      <tr><td>2 h</td><td class="num">≈1.8 mA</td><td class="num">≈1.5 mA</td></tr>
+    </tbody>
+  </table>
+  <div class="mut" style="margin-top:8px">
+    静态口径就是睡态 1.03–1.07 mA（不变）；含上报的平均口径被 <b>会话时长</b> 支配——
+    下一步把"固定 90 s 会话"改成"MQTT 连上 + report 发出即收"，平均可再降 ~35%。
+  </div>
+</div>
+
+<h2>5. 固件改动清单</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>文件</th><th>内容</th></tr></thead>
+    <tbody>
+      <tr><td><code>Core/Src/rtc_app.c</code> / <code>Inc/rtc_app.h</code>（新）</td><td>纯寄存器 RTC 驱动（LSE→1 Hz→闹钟→EXTI17→NVIC）；不引 HAL_RTC、不动 hal_conf，CubeMX 再生成无冲突</td></tr>
+      <tr><td><code>Core/Src/stm32f1xx_it.c</code></td><td>+ <code>RTC_Alarm_IRQHandler</code></td></tr>
+      <tr><td><code>Core/Src/main.c</code></td><td>+ lp_cycle 状态机 / <code>lp_cycle</code>·<code>lp_cycle_off</code>·<code>time</code> 三条 MQTT 指令 / 会话 report 上报 / <b>唤醒后 SystemClock_Config</b></td></tr>
+      <tr><td><code>CMakeLists.txt</code></td><td>+ rtc_app.c</td></tr>
+    </tbody>
+  </table>
+<pre>MQTT 指令：
+{"cmd":"lp_cycle","period_min":30}   → 进入循环（1..1440，缺省 30）
+{"cmd":"lp_cycle_off"}               → 退出循环回常在线
+{"cmd":"time","epoch":1791827000}    → 服务器授时写 RTC（后备通道）</pre>
+</div>
+
+<h2>6. 本轮踩坑</h2>
+<div class="card">
+  <ul style="margin:4px 0;padding-left:22px">
+    <li><b>mklink flash 报 <code>Failed to write file,status: 17</code></b>：旧 hex 也失败→非 hex 问题；SWD 正常。
+        疑似共享 runtime 绑错工程（409 "different project"）。<b>解法：OpenOCD（CMSIS-DAP）烧录一次成功</b>，
+        命令已记 §16.5；连不目标先继电器 power-cycle（继电器现在 COM12、F-11 在 COM4）。</li>
+    <li><b>F1 RTC 调试读数陷阱</b>：0x40002810/14 是 <code>DIVH/DIVL</code>（预分频计数器 0..32767 循环），
+        不是 CNT！CNT 在 0x18/0x1C、ALR 在 0x20/0x24。读 DIVL 得到均匀随机数，极像"时钟错了"。</li>
+    <li><b>睡态下 SWD 读外设寄存器全 0</b> = Stop 指纹（含 RTC 寄存器接口——RTC 内核在 VBAT 域照跑），
+        别误判成掉电/崩溃；RAM 读数在睡态也不可靠，校验变量要等会话窗口。</li>
+    <li><code>mklink read-ram --size 4</code> 小读偶发回 0，回读校验用 ≥8 字节窗口。</li>
+    <li>授时：<code>AT+CCLK</code> 是飞思创 AT 固件指令，银尔达透传固件不支持（安全失败，不影响定时）。</li>
+  </ul>
+</div>
+
+<p class="mut" style="margin-top:24px">
+  数据来源：F-11 真值表 180 s 连续记录（<code>docs/f11-rtc-cycle.csv</code>）· SWD 寄存器验证（BDCR/CNT/ALR/CRL）·
+  方案文档 §16（<code>docs/low-power-1mA-plan.md</code>）。
+</p>
+</body>
+</html>

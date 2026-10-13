@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>整板电流实测 — 车牌灯控板状态对比</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1f1f1f; --muted:#6b6b6b; --line:rgba(0,0,0,.12);
+    --card:#f6f6f4; --accent:#378ADD; --range:#B5D4F4; --range-b:#85B7EB;
+    --sleep:#1D9E75; --warn:#BA7517;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1c1c1e; --fg:#f2f2f2; --muted:#a0a0a0; --line:rgba(255,255,255,.16);
+      --card:#2a2a2d; --accent:#85B7EB; --range:#33465c; --range-b:#4a6486; --sleep:#5DCAA5; --warn:#EF9F27;
+    }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; padding:32px 20px 56px; background:var(--bg); color:var(--fg);
+       font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       font-size:14px; line-height:1.65;}
+  .wrap{max-width:960px; margin:0 auto;}
+  h1{font-size:22px; font-weight:500; margin:0 0 6px;}
+  .sub{font-size:13px; color:var(--muted); margin:0 0 22px;}
+  h2{font-size:16px; font-weight:500; margin:32px 0 12px;}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin:18px 0 4px;}
+  .card{background:var(--card); border-radius:10px; padding:14px 16px;}
+  .card .k{font-size:13px; color:var(--muted);}
+  .card .v{font-size:24px; font-weight:500; margin-top:4px;}
+  .card .n{font-size:12px; color:var(--muted); margin-top:2px;}
+  .chartbox{background:var(--card); border-radius:12px; padding:18px 18px 10px; margin-top:14px;}
+  .legend{display:flex; flex-wrap:wrap; gap:16px; font-size:12px; color:var(--muted); margin-bottom:10px;}
+  .legend span{display:flex; align-items:center; gap:6px;}
+  .sw{width:10px; height:10px; border-radius:2px; display:inline-block;}
+  .h440{position:relative; width:100%; height:440px;}
+  .h360{position:relative; width:100%; height:360px;}
+  ul{padding-left:20px; margin:10px 0;}
+  li{margin:6px 0;}
+  .meta{font-size:12px; color:var(--muted); margin-top:28px; padding-top:16px; border-top:1px solid var(--line);}
+  code{font-family:ui-monospace,Consolas,monospace; font-size:12px; background:var(--card); padding:1px 5px; border-radius:4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>整板电流实测 — 车牌灯控板状态对比</h1>
+  <p class="sub">2026-10-12 19:47–19:49 · 探针 power-read（MKLink MicroKeenV4，下载器 VCC 实际输出）· 银尔达 YED_DTU4 透传模组 · 电压恒 ~3.37&nbsp;V</p>
+
+  <div class="cards">
+    <div class="card"><div class="k">睡眠态平均电流</div><div class="v">40.3 mA</div><div class="n">136.0 mW · 全场最低</div></div>
+    <div class="card"><div class="k">运行态平均电流</div><div class="v">81.2 mA</div><div class="n">273.5 mW</div></div>
+    <div class="card"><div class="k">睡眠相对降幅</div><div class="v">约 50%</div><div class="n">电流下限仍 33 mA</div></div>
+    <div class="card"><div class="k">4G 突发峰值</div><div class="v">156 mA</div><div class="n">绿灯档采样窗口内</div></div>
+  </div>
+
+  <h2>各状态电流（平均 + min–max 波动区间）</h2>
+  <div class="chartbox">
+    <div class="legend">
+      <span><span class="sw" style="background:var(--range)"></span>min–max 波动区间</span>
+      <span><span class="sw" style="background:var(--accent)"></span>平均电流</span>
+      <span><span class="sw" style="background:var(--sleep)"></span>睡眠态（最低）</span>
+    </div>
+    <div class="h440"><canvas id="chartCurrent" role="img" aria-label="水平条形图：九种状态的整板电流，含最小最大波动区间与平均值"></canvas></div>
+  </div>
+
+  <h2>各状态平均功率</h2>
+  <div class="chartbox">
+    <div class="legend">
+      <span><span class="sw" style="background:var(--accent)"></span>P_avg (mW)</span>
+      <span><span class="sw" style="background:var(--sleep)"></span>睡眠态</span>
+    </div>
+    <div class="h360"><canvas id="chartPower" role="img" aria-label="柱状图：九种状态的整板平均功率"></canvas></div>
+  </div>
+
+  <h2>读数说明</h2>
+  <ul>
+    <li><b>耗电大头是 4G 模组</b>：所有档位电流下限落在 33–36 mA，是模组维持 MQTT 的基础电流，周期性注册/心跳突发可冲到 100–156 mA。</li>
+    <li><b>睡眠态有效但不够"深"</b>：MCU 进 WFI + 停心跳/探活，模组仍全供电、keepalive 照跑，且模组心跳/回显会把 MCU 唤醒，所以是"MCU 休息、模组值班"。</li>
+    <li><b>LED 贡献无法分离</b>：4G 突发噪声远大于 LED 差异（绿灯 255 反而录到 97.79 mA，明显撞上突发）。要单独测 LED 需先 <code>v4g off</code> 断模组。</li>
+    <li><b>样本偏少</b>：每档仅 6 点（间隔 0.5 s），avg 抖动可达 20–30 mA，下结论建议 n≥30。</li>
+    <li><b>测的是整板总线电流</b>：MCU + 4G + LED + 传感器混在一起，分不出单项。电压稳定在 3364–3374 mV。</li>
+  </ul>
+
+  <h2>未测：4G 模组断电档</h2>
+  <ul>
+    <li><code>{"cmd":"v4g","state":"off"}</code> 未执行 —— 断 PA3 后 MQTT 链路消失，只能用 SWD 写 <code>GPIOA-&gt;BSRR</code>(<code>0x40010810</code>)=<code>0x08</code> 恢复，存在失败风险。</li>
+    <li>补测流程：先关灯 → 采基线 → <code>v4g off</code> → 采 6 次 → 立刻 SWD 恢复 PA3 → 等待重入网并核对 <code>ready</code> 心跳。</li>
+  </ul>
+
+  <p class="meta">数据源：<code>power_state_test.py</code> / <code>power_state_test.log</code> · 完整报告见项目 <code>docs/power-consumption-test.md</code></p>
+</div>
+
+<script>
+(function(){
+  var labels=['1 运行态','2 红灯 255','3 红灯 64','4 绿灯 255','5 黄灯 255','6 LED 全灭','7 密集收发','8 睡眠态','9 唤醒后'];
+  var lo=[36.47,40.65,37.05,56.09,39.79,62.16,34.40,33.22,58.13];
+  var hi=[136.61,101.31,124.27,156.43,128.20,70.11,67.83,72.72,69.52];
+  var avg=[81.15,78.10,76.13,97.79,75.01,65.51,59.62,40.33,63.94];
+  var pw=[273.5,262.6,256.6,329.0,252.8,221.0,201.2,136.0,215.7];
+
+  function cssv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+  var ACCENT=cssv('--accent')||'#378ADD', SLEEP=cssv('--sleep')||'#1D9E75',
+      RANGE=cssv('--range')||'#B5D4F4', RANGEB=cssv('--range-b')||'#85B7EB',
+      MUTED=cssv('--muted')||'#6b6b6b';
+
+  var base={
+    responsive:true, maintainAspectRatio:false,
+    plugins:{legend:{display:false}},
+    scales:{
+      x:{beginAtZero:true, grid:{color:'rgba(128,128,128,.15)'}, ticks:{color:MUTED}},
+      y:{grid:{display:false}, ticks:{color:MUTED, font:{size:12}}}
+    }
+  };
+
+  new Chart(document.getElementById('chartCurrent'),{
+    type:'bar',
+    data:{labels:labels, datasets:[
+      {label:'波动区间', data:lo.map(function(v,i){return [v,hi[i]];}),
+       backgroundColor:RANGE, borderColor:RANGEB, borderWidth:1, borderRadius:4,
+       barPercentage:0.6, categoryPercentage:0.72},
+      {label:'平均电流', data:avg,
+       backgroundColor:avg.map(function(v,i){return i===7?SLEEP:ACCENT;}),
+       borderRadius:4, barPercentage:0.32, categoryPercentage:0.72}
+    ]},
+    options:Object.assign({}, base, {
+      indexAxis:'y',
+      scales:{
+        x:{beginAtZero:true, title:{display:true, text:'电流 (mA)', color:MUTED}, grid:{color:'rgba(128,128,128,.15)'}, ticks:{color:MUTED}},
+        y:{grid:{display:false}, ticks:{color:MUTED, font:{size:12}}}
+      },
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{label:function(c){
+          return c.datasetIndex===0 ? ('区间 '+c.raw[0].toFixed(1)+' – '+c.raw[1].toFixed(1)+' mA')
+                                    : ('平均 '+c.raw.toFixed(2)+' mA');
+        }}}
+      }
+    })
+  });
+
+  new Chart(document.getElementById('chartPower'),{
+    type:'bar',
+    data:{labels:labels, datasets:[
+      {label:'P_avg', data:pw,
+       backgroundColor:pw.map(function(v,i){return i===7?SLEEP:ACCENT;}),
+       borderRadius:4, barPercentage:0.55, categoryPercentage:0.75}
+    ]},
+    options:Object.assign({}, base, {
+      scales:{
+        x:{beginAtZero:true, grid:{display:false}, ticks:{color:MUTED, autoSkip:false, maxRotation:45, font:{size:11}}},
+        y:{beginAtZero:true, title:{display:true, text:'功率 (mW)', color:MUTED}, grid:{color:'rgba(128,128,128,.15)'}, ticks:{color:MUTED}}
+      },
+      plugins:{legend:{display:false}, tooltip:{callbacks:{label:function(c){return c.raw.toFixed(1)+' mW';}}}}
+    })
+  });
+})();
+</script>
+</body>
+</html>

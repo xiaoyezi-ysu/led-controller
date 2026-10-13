@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INA228 监测板读数准确性验证</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --line:#e5e7eb; --ink:#1f2328; --mut:#6b7280;
+    --red:#d9534f; --blue:#2563eb; --green:#16a34a; --amber:#d97706; --purple:#7c3aed; --cyan:#0891b2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:32px 22px 64px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .sub{color:var(--mut);font-size:13.5px;margin-bottom:26px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:6px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi .lab{font-size:12.5px;color:var(--mut);margin-bottom:6px}
+  .kpi .val{font-size:25px;font-weight:700;letter-spacing:-.4px}
+  .kpi .val small{font-size:13px;font-weight:500;color:var(--mut);margin-left:3px}
+  .kpi.good .val{color:var(--green)}
+  .kpi.warn .val{color:var(--amber)}
+  .kpi.bad .val{color:var(--red)}
+  .kpi.blue .val{color:var(--blue)}
+  .kpi.pur .val{color:var(--purple)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;vertical-align:top}
+  th{background:#fafbfc;font-weight:600;color:#374151;font-size:13px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+  .tag.ok{background:#e8f6ee;color:#15803d}
+  .tag.no{background:#fdeceb;color:#b91c1c}
+  .tag.q{background:#fff5e6;color:#b45309}
+  .hl{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .hl b{color:#b45309}
+  .ok{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .ok b{color:#15803d}
+  code{background:#f3f4f6;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+       font:13px/1.5 "Cascadia Mono",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;
+      font:12.5px/1.6 "Cascadia Mono",Consolas,monospace}
+  ul{margin:8px 0 0 0;padding-left:22px}
+  li{margin:4px 0}
+  /* 偏差柱状（纯 CSS，无外部依赖） */
+  .devbars{display:flex;align-items:flex-end;gap:34px;height:190px;padding:8px 6px 0;
+           border-bottom:2px solid var(--line);margin-bottom:8px}
+  .dcol{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+  .dval{font-weight:700;font-size:14.5px;margin-bottom:5px;font-variant-numeric:tabular-nums}
+  .dbar{width:100%;max-width:98px;border-radius:8px 8px 0 0}
+  .dlab{margin-top:9px;font-size:12.5px;color:var(--mut);text-align:center;min-height:34px}
+  @media (max-width:560px){.devbars{gap:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>INA228 监测板读数准确性验证 —— <span style="color:var(--green)">mA 量级可信，系统偏差 +1.4%</span></h1>
+  <div class="sub">2026-10-13 · 车牌 ver2 · 三通道 INA228/INA226 板在 <code>COM3</code>（CH343，38400 8N1）·
+    参考：AFU F-11 真值表 · 被测板：8 MHz 固件 · R24 已拆 · 断电零点用 USB 继电器（COM12）实测</div>
+
+  <div class="kpis">
+    <div class="kpi good"><div class="lab">零点（DUT 断电）</div><div class="val">0.010 <small>mA</small></div></div>
+    <div class="kpi blue"><div class="lab">增益偏差（两点拟合）</div><div class="val">+1.4 <small>%</small></div></div>
+    <div class="kpi warn"><div class="lab">与 F-11 最大偏差</div><div class="val">+4.1 <small>%</small></div></div>
+    <div class="kpi pur"><div class="lab">反算分流电阻 R</div><div class="val">0.1000 <small>Ω</small></div></div>
+  </div>
+
+  <div class="card" style="border-left:4px solid var(--blue);margin-bottom:0">
+    <b>📌 已按板上固件源码复核（<code>ESP32S3_GEEK/src/main.cpp</code>）</b><br>
+    ① 分流电阻 <code>#define R_SHUNT 0.1f</code> ⇒ 满量程 1.6384 A / 0.4096 A、电流 LSB 3.125 µA；
+    ② <code>raw</code> 的 LSB <b>随自动量程变</b>（LOW 78.125 nV / HIGH 312.5 nV），按标签取 ⇒ 反算 R = <b>0.1000 Ω</b>；
+    ③ 串口 **1 Hz/通道** 是固件打印节流，芯片内部 ADC 是 **19.8 Hz**（ADCCFG=0xFB6A）；
+    ④ 板上有**自带两点标定**（`cali zero/span/save`，存 NVS）——修偏差应改在板里，不必在主机侧改数。
+    <span style="color:var(--mut)">本文档初版把 0.1 Ω 误算成 0.408 Ω（见 §4 更正说明），已全部修正。</span>
+  </div>
+
+  <h2>1. 结论先说</h2>
+  <div class="card">
+    <div class="ok">
+      <b>这块 INA228 板的读数是准的，可以直接替代 F-11 做 mA 量级测量。</b><br>
+      零点只有 <b>10 µA</b>（板子断电时实测），增益比 F-11 高 <b>≈1.4%</b>。
+      用两个稳态点（2.4 mA / 1.2 mA）拟合得 <code>I_ina ≈ 1.014 × I_true + 0.03 mA</code>，
+      外推到 58 mA 也只差 0.15% —— 一个很小的固定增益偏差，不校正也能用。
+    </div>
+    <div class="hl">
+      <b>⚠️ 两个使用限制（比精度更重要）：</b><br>
+      ① <b>串口只有 ≈1 Hz/通道</b>（固件 <code>millis()&gt;=1000</code> 节流；芯片内部 ADC 其实有 19.8 Hz）
+      ⇒ 测 4G 模组那种 3 s 周期的振荡电流**中位值不可靠**（中位 59.5 mA，但 min 13.6 / max 67.6，σ 17 mA），
+      要么拉长到 ≥60 s 取均值，要么在稳态下测。<br>
+      ② <b>电压通道读 0.000 V</b> ⇒ 只接了串联的 IN+/IN−，VBUS 没接，所以 P 恒为 0.00 mW。要功率得把 VBUS 接到电源上。
+    </div>
+  </div>
+
+  <h2>2. 它是什么、怎么连的</h2>
+  <div class="card">
+    <p style="margin-top:0">CH343 转串口的 <b>三通道电流电压监测板</b>，38400 8N1 纯文本输出，每轮打三行 + 一行 I2C 诊断：</p>
+<pre>[CH1 busA 0x44 INA228 LOW ] V=0.000V I=0.05915A P=0.00mW T=27.6C raw=75710
+[CH2 busB 0x40 INA228 LOW ] V=0.002V I=0.00002A P=0.00mW T=26.9C raw=24
+[CH3 busA 0x41 INA226      ] V=0.000V I=0.00000A P=0.00mW (no temp) raw=0
+[I2C] read fails 0/0/0 | reinit 0/0/0 | frame 10.5ms</pre>
+    <table>
+      <thead><tr><th>通道</th><th>芯片</th><th>I²C</th><th>本次用途</th><th>读数表现</th></tr></thead>
+      <tbody>
+        <tr><td><b>CH1</b> busA</td><td>INA228（LOW 量程）</td><td>0x44</td><td><b>串在被测板电源回路里 —— 就是它测 DUT 电流</b></td><td>随负载变化 ✓</td></tr>
+        <tr><td>CH2 busB</td><td>INA228（LOW 量程）</td><td>0x40</td><td>未接负载</td><td>恒 ≈0.02 mA（含自身 ~7 µV 零点）</td></tr>
+        <tr><td>CH3 busA</td><td>INA226</td><td>0x41</td><td>未接</td><td>恒 0（raw=0）</td></tr>
+      </tbody>
+    </table>
+    <p style="color:var(--mut);font-size:13px;margin-bottom:0">
+      <code>raw</code> 是 <b>VSHUNT 寄存器计数</b>（20 位有符号）。<b>它的 LSB 随自动量程变</b>，行里带
+      <code>LOW</code>/<code>HIGH</code> 标签：<code>LOW</code>（±40.96 mV）→ <b>78.125 nV/LSB</b>；
+      <code>HIGH</code>（±163.84 mV）→ <b>312.5 nV/LSB</b>。按标签取 LSB 反算分流电阻，
+      实测全部落在 <b>0.0999 ~ 0.1001 Ω</b> —— 与固件 <code>#define R_SHUNT 0.1f</code> 完全一致。
+    </p>
+  </div>
+
+  <h2>3. 与 F-11 真值表的三点比对（同一块板、同一状态）</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>被测板状态</th><th class="num">F-11 真值（中位）</th><th class="num">INA228 中位</th><th class="num">偏差</th><th>样本</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>4G 上电 · 8 MHz Run</td>
+          <td class="num">≈58.3 mA <small style="color:var(--mut)">*</small></td>
+          <td class="num"><b>59.23 / 59.47 mA</b></td>
+          <td class="num" style="color:var(--amber)">+1.6 ~ +2.0 %</td>
+          <td><span class="tag q">60 s / 51 帧</span></td>
+        </tr>
+        <tr>
+          <td>4G 断开 · 8 MHz Run</td>
+          <td class="num">2.395 mA</td>
+          <td class="num"><b>2.460 mA</b></td>
+          <td class="num" style="color:var(--amber)">+2.7 %</td>
+          <td><span class="tag ok">30 s / 26 帧 · σ 0.10</span></td>
+        </tr>
+        <tr>
+          <td>4G 断开 · Stop</td>
+          <td class="num">1.162 mA</td>
+          <td class="num"><b>1.210 mA</b></td>
+          <td class="num" style="color:var(--amber)">+4.1 %</td>
+          <td><span class="tag ok">30 s / 26 帧 · σ 0.35</span></td>
+        </tr>
+        <tr>
+          <td><b>被测板断电（零点）</b> —— 继电器切断供电</td>
+          <td class="num">0 mA</td>
+          <td class="num"><b>0.010 mA</b></td>
+          <td class="num" style="color:var(--green)">+10 µA</td>
+          <td><span class="tag ok">12 s / 11 帧 · raw 中位 8</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="color:var(--mut);font-size:13px;margin:12px 0 0">
+      <small>*</small> F-11 同态的原始记录是 59.40 mA（当时 <b>R24 还接着</b>）；现在 R24 已拆，按实测 −1.1 mA 折算成 58.3 mA 再比。
+      因 4G 态有周期振荡，这行的中位值受混叠影响，仅供参考；<b>2.4 mA / 1.2 mA / 零点这三行才是干净的稳态比较</b>。
+    </p>
+    <div class="devbars" style="margin-top:22px">
+      <div class="dcol"><div class="dval" style="color:var(--amber)">+1.6%</div><div class="dbar" style="height:30px;background:#f59e0b"></div><div class="dlab">4G 上电 · Run<br>≈58.3 mA</div></div>
+      <div class="dcol"><div class="dval" style="color:var(--amber)">+2.7%</div><div class="dbar" style="height:50px;background:#f59e0b"></div><div class="dlab">4G 断 · Run<br>2.395 mA</div></div>
+      <div class="dcol"><div class="dval" style="color:var(--amber)">+4.1%</div><div class="dbar" style="height:76px;background:#f59e0b"></div><div class="dlab">4G 断 · Stop<br>1.162 mA</div></div>
+      <div class="dcol"><div class="dval" style="color:var(--green)">+0.9%</div><div class="dbar" style="height:17px;background:#16a34a"></div><div class="dlab">零点（断电）<br>0 → 0.010 mA</div></div>
+    </div>
+    <p style="color:var(--mut);font-size:13px;margin:6px 0 0">
+      柱高 = 相对 F-11 的偏差。低电流两档偏差更大，是因为分母小 + 打印分辨率只有 10 µA（0.00116 → 显示 0.00121），
+      不是"越准越小"的规律；拟合出来的<b>增益项才是系统性的那一块</b>（+1.4%）。
+    </p>
+  </div>
+
+  <h2>4. 拟合结果与校正</h2>
+  <div class="card">
+    <p style="margin-top:0">用 2.395 → 2.460 mA 与 1.162 → 1.210 mA 两个**稳态点**做线性拟合（4G 态那点有混叠，不做拟合权重）：</p>
+<pre>I_ina ≈ 1.014 × I_true + 0.03 mA      # 增益 +1.4%，零点 +30 µA
+I_true = (I_ina − 0.03) / 1.014        # 反算（技能里 --cal 用这个）
+外推校验：58.3 mA 处预测 59.14 vs 实测 59.23 → 差 0.15%
+</pre>
+    <ul>
+      <li><b>零点 +30 µA</b>：在 0.1 Ω 上只是 <b>3 µV</b>，正落在 INA228 自身输入失调
+        （typ ±1 µV / max ±7 µV ⇒ @0.1 Ω 为 10 ~ 70 µA）范围内 ⇒ <b>芯片自身</b>，不是接线问题。
+        独立实测的断电零点 +10 µA 也是同一量级。</li>
+      <li><b>增益 +1.4% 最可能的来源</b>：<b>0.1 Ω 分流电阻的容差</b>（1% 档很常见），再叠加 F-11 自身的基准误差。
+        INA228 芯片自身增益误差只有 ±0.05%，不背这个锅。
+        <b>不是固件常量错</b> —— 固件 <code>R_SHUNT=0.1f</code> 与反算的 0.1000 Ω 完全一致。</li>
+      <li>量具差异可以忽略：0.1 Ω 分流在 60 mA 时压降只有 <b>6 mV</b>（0.18%），对被测板电流的影响远小于 1.4%。</li>
+    </ul>
+    <div class="hl" style="margin-bottom:12px">
+      <b>✏️ 更正（初版一处算错）</b>：初版说「固件按 0.400 Ω 换算、物理电阻实际 0.408 Ω」——
+      那是因为**把 LOW 档的 raw 当成 HIGH 档解释**（LSB 取 312.5 nV 而非 78.125 nV），
+      正好差 4 倍。按行里的档位标签取对 LSB 后，反算 R = <b>0.1000 Ω</b>，与固件常量逐位吻合。
+      故「0.4 Ω 分流」相关结论（含 24 mV 压降）作废，实测压降是 6 mV。
+      <b>根因是我读数时没看量程标签</b>，固件本身没有 bug。
+    </div>
+    <div class="ok" style="margin-bottom:0">
+      <b>实用建议（优先在板里校，而不是主机侧改数）：</b><br>
+      板上固件自带两点标定，系数存 NVS 掉电不丢，屏幕与串口输出都会走它：
+<pre style="margin:10px 0 0">ina228.cmd cmd "cali show"                 # 先看当前系数（本机当前 = 默认 0 / 1）
+ina228.cmd cmd "cali zero"                 # ⚠ 只在 DUT 无电流时做
+ina228.cmd cmd "cali span 1 0.002395"      # CH1 正通 2.395 mA 参考 → 反算增益
+ina228.cmd cmd "cali save"                 # 写入 NVS</pre>
+      参考值建议取 F-11 同态读数（把两台串在同一回路里同时读最干净）。不校正则误差 ≤2%。
+    </div>
+  </div>
+
+  <h2>5. 还需要注意的</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th style="width:170px">项</th><th>实测 / 说明</th></tr></thead>
+      <tbody>
+        <tr><td>采样率</td><td><b>串口 ≈1 Hz/通道</b>（固件 `millis()&gt;=1000` 节流 + 主循环 <code>delay(150)</code>）；
+          <b>芯片内部 ADC ≈19.8 Hz</b>（ADCCFG=0xFB6A：1052 µs × 3 通道 × 16 次平均）。
+          测周期性负载时串口数据仍会混叠，测瞬态完全不行（要示波器）。想提速得改固件。</td></tr>
+        <tr><td>打印分辨率</td><td>电流 5 位小数 = <b>10 µA 步进</b>；测 1 mA 时量化误差就有 1%。
+          芯片本身 CURRENT LSB = <b>3.125 µA</b>（= RANGE_HIGH/2¹⁹），是打印限制了它。</td></tr>
+        <tr><td>电压通道</td><td>CH1 恒 <code>V=0.000V</code> ⇒ VBUS 没接，<code>P</code> 恒 0（固件里 P 还是用 V×I 重算的）。要功率读数就把 VBUS 接到电源正。</td></tr>
+        <tr><td>通道一致性</td><td>CH2 空载时读 ≈0.02 mA（raw≈30 counts ≈ 2.3 µV）—— 说明每个通道都有 ~5–20 µA 的零漂，量 1 mA 以下时留意。</td></tr>
+        <tr><td>I2C 健康度</td><td>整个测试期间 <code>read fails 0/0/0</code>，无丢帧、无 reinit。板上每帧 10.5 ms。</td></tr>
+        <tr><td>供电归属</td><td>断电测试证明 <b>DUT 的供电确实经过本板的分流电阻 + 继电器</b>：继电器一断，CH1 立刻掉到 10 µA。</td></tr>
+        <tr><td>插入损耗</td><td>0.1 Ω × 60 mA = <b>6 mV</b>（0.18%），对 DUT 电流的影响可忽略。</td></tr>
+        <tr><td>温度</td><td>CH1 板温 27.6–28.1 °C，稳定；可用于粗看环境。</td></tr>
+        <tr><td>板上固件源</td><td><code>E:\Documents\Documents\PlatformIO\Projects\ESP32S3_GEEK\src\main.cpp</code>（ESP32-S3 + ST7305 1.54" 200×200 屏）。所有常量（R_SHUNT / 量程 / ADCCFG / 打印节流 / cali 命令）均已在上面核对。</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>6. 已固化为技能</h2>
+  <div class="card">
+    <p style="margin-top:0">新建 <b><code>ina228-monitor</code></b>（<code>~/.workbuddy/skills/ina228-monitor/</code>），纯 pyserial，无外部二进制：</p>
+<pre>INA="C:\Users\Administrator\.workbuddy\skills\ina228-monitor\scripts\ina228.cmd"
+
+%INA% list                               # 自动找出这块板在哪一路（已验证：COM3）
+%INA% read --secs 20                     # 中位/均值/min/max/σ + 档位 + R 自检
+%INA% read --secs 30 --ch 1 --cal        # 只看 CH1，并套用 +1.4% 标定
+%INA% stream --secs 300 --csv pwr.csv    # 长记录（CSV 含 range / vshunt_mV）
+%INA% raw --secs 3                       # 打印原始行排查协议
+%INA% cmd "cali show"                    # 给板上固件发命令（命令通道=同一路串口）</pre>
+    <p style="color:var(--mut);font-size:13px;margin-bottom:0">
+      主机侧标定系数在 <code>references/calibration.json</code>（gain 1.014 / offset 0.03 mA），默认不启用，加 <code>--cal</code> 才套。<br>
+      <b>更推荐直接用板上自带的标定</b>（<code>cmd "cali span 1 &lt;Iref_A&gt;"</code> + <code>cmd "cali save"</code>），
+      系数写进 ESP32 的 NVS、屏幕和串口一起生效、掉电不丢。<br>
+      注意 <code>--port</code> 是顶层参数，要写在子命令前面：<code>ina228.cmd --port COM3 read --secs 10</code>。
+  </div>
+
+  <p style="color:var(--mut);font-size:12.5px;margin-top:26px">
+    原始数据：<code>docs/ina228_4gon.csv</code>（4G 上电 60 s）、<code>ina228_4goff.csv</code>（Run 30 s）、
+    <code>ina228_stop.csv</code>（Stop 30 s）、<code>ina228_zero.csv</code>（断电零点 12 s）、<code>ina228_baseline.csv</code>（首测 20 s）。
+    参考文档：<code>low-power-verify-3point.html</code>（F-11 三点真值）、<code>r24-removed-1mA.html</code>。
+  </p>
+
+</div>
+</body>
+</html>

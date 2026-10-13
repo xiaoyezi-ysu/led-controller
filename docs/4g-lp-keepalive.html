@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>4G 模组的「低功耗」与「保活」到底是不是一回事 —— lp 指令实测 + 银尔达官方口径</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1e2430; --mut:#6b7280; --line:#e5e8ef;
+    --green:#16a34a; --red:#dc2626; --blue:#2563eb; --purple:#7c3aed; --amber:#d97706;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 4vw;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.65}
+  h1{font-size:24px;margin:0 0 6px;letter-spacing:.2px}
+  h2{font-size:18px;margin:34px 0 12px;border-left:4px solid var(--blue);padding-left:11px}
+  h3{font-size:15px;margin:18px 0 8px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(166px,1fr));gap:12px;margin:14px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .lab{font-size:12px;color:var(--mut)}
+  .kpi .val{font-size:22px;font-weight:700;margin-top:3px}
+  .kpi .val small{font-size:12.5px;font-weight:400;color:var(--mut)}
+  .good{border-left:4px solid var(--green);background:#f0fdf4;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .bad{border-left:4px solid var(--red);background:#fef2f2;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .hl{border-left:4px solid var(--amber);background:#fffbeb;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .info{border-left:4px solid var(--blue);background:#eff6ff;border-radius:8px;padding:12px 15px;margin:11px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  td.num{font-variant-numeric:tabular-nums;text-align:right}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.6px;
+       font-family:"Cascadia Code",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.6px;line-height:1.55}
+  .mut{color:var(--mut);font-size:12.5px}
+  .flowwrap{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 6px 14px;text-align:center}
+  svg{max-width:100%;height:auto}
+  .bars{display:flex;align-items:flex-end;gap:26px;height:180px;margin:26px 0 4px;padding:0 10px;
+        border-bottom:2px solid var(--line);justify-content:center}
+  .bar{width:74px;position:relative;border-radius:5px 5px 0 0}
+  .bar span{position:absolute;top:-19px;left:50%;transform:translateX(-50%);font-size:12px;font-weight:700;white-space:nowrap}
+  .bar i{position:absolute;bottom:-40px;left:50%;transform:translateX(-50%);font-size:11.5px;color:var(--mut);
+         white-space:nowrap;font-style:normal;text-align:center;line-height:1.3}
+  .b-a{background:#fca5a5}
+  .b-c{background:#86efac}
+  .b-d{background:#a5b4fc}
+  .b-run{background:#fdba74}
+  .b-stop{background:#93c5fd}
+  .legend{display:flex;gap:16px;font-size:12.5px;color:var(--mut);margin:56px 0 2px;justify-content:center;flex-wrap:wrap}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .quote{background:#f8fafc;border:1px dashed var(--line);border-radius:8px;padding:11px 14px;margin:10px 0;font-size:13px}
+  .quote b{color:var(--purple)}
+  ul{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+</style>
+</head>
+<body>
+
+<h1>4G 模组的「低功耗」与「保活」是不是一回事？</h1>
+<div class="sub">2026-10-13 · 车牌 ver2 · 银尔达 YED_DTU4（Air780EPM）透传固件 @ broker.emqx.io · F-11 真值表（COM4）+ SWD 运行时注入 · 依据银尔达官方命令手册与产品功耗表</div>
+
+<h2>0. 结论先说</h2>
+<div class="card">
+  <div class="kpis">
+    <div class="kpi"><div class="lab">4G 在线 + STM32 每 15 s 心跳</div><div class="val" style="color:var(--red)">59.3 <small>mA（中位）</small></div></div>
+    <div class="kpi"><div class="lab">4G 在线 + STM32 静默（仅模组自己保活）</div><div class="val" style="color:var(--green)">14.6 <small>mA（中位）</small></div></div>
+    <div class="kpi"><div class="lab">4G 整个断电 + MCU Stop</div><div class="val" style="color:var(--green)">0.226 <small>mA</small></div></div>
+    <div class="kpi"><div class="lab">config,set,lp,1 的实测效果</div><div class="val" style="color:var(--mut)">没有 <small>（两轮对照）</small></div></div>
+  </div>
+
+  <div class="bad">
+    <b>① `lp` 不是「保活」，它是「进入低功耗」的开关。</b>官方命令手册第 20 条对它的功能描述只有一句 ——<b>「控制设备进入低功耗」</b>。真正维持服务器连接的是<strong>另一条独立机制</strong>：DTU 通道自带的<b>心跳包</b>（官方写明「<b>用于维持设备与服务器的连接</b>」，间隔最小 60 s，我们配的是 120 s）。这条心跳跟 <code>lp</code> 无关、一直在跑。
+  </div>
+  <div class="hl">
+    <b>② 容易混淆的原因：银尔达把「低功耗 + 3 分钟心跳 + 保持连接」打包成了一个产品级方案</b>（官方功耗表里的「保持服务器网络连接」一栏）。<code>lp</code> 只是这套方案的开关之一。所以「lp = 低功耗保持连接」这个说法是<strong>方案名</strong>，不是命令本身的语义。
+  </div>
+  <div class="bad">
+    <b>③ 在这块模组上，`lp` 指令既不回执、也不降电流。</b>实测两轮对照无差别；固件启动时回读 <code>config,get,lp</code> 得到的回执是 <code>"(no-response)"</code> —— 模组根本没应答。要 100% 排除，需要重烧一个 <code>DTU_LP_VALUE=1</code> 的固件做整机对照（见 §4）。
+  </div>
+  <div class="good">
+    <b>④ 意外收获（对项目更有用）：把 STM32 的 15 s 心跳/探活停掉，模组在线电流从 59.3 → 14.6 mA（−75%）。</b>这正是固件里 <code>DTU_SetLowPower(1)</code> / <code>{"cmd":"sleep"}</code> 的设计意图 —— <b>「信任模组 keepalive，MCU 别说话」</b>。也就是说「保持在线」这件事，最省也要 <b>15 mA 量级</b>，仍是断电方案（0.226 mA）的 <b>65 倍</b>。
+  </div>
+</div>
+
+<h2>1. 官方对 `lp` 的原始定义（原文摘录）</h2>
+<div class="card">
+  <h3>1.1 命令手册 · 基本命令第 20 条</h3>
+  <div class="quote">
+    <b>20、控制设备开启低功耗命令_lp</b><br>
+    功能：<b>控制设备进入低功耗</b><br>
+    设置参数：低功耗状态　0:关闭　1:开启<br>
+    设置实例：<code>config,set,lp,1</code> → <code>config,lp,ok</code><br>
+    查询实例：<code>config,get,lp</code> → <code>config,lp,ok,1</code>
+  </div>
+  <p class="mut">注意：官方原文里<b>通篇没有出现「保持连接」四个字</b>。这个语义是后来在低功耗产品方案里被组合出来的。</p>
+
+  <h3>1.2 官方产品功耗表（银尔达 DTU 系列，多个型号）</h3>
+  <table>
+    <tr><th style="width:38%">工作模式</th><th>说明</th><th style="width:22%">平均电流</th></tr>
+    <tr><td>超低功耗休眠</td><td>LED 关闭，设备不运行，<b>不连接服务器</b>，可周期唤醒</td><td class="num">8 µA ~ 465 µA</td></tr>
+    <tr><td><b>保持服务器网络连接</b></td><td>关闭 LED，<b>3 分钟发一个心跳包</b></td><td class="num" style="color:var(--amber)"><b>2.2 ~ 14.5 mA</b></td></tr>
+    <tr><td>超低功耗休眠 10 min 周期唤醒</td><td>唤醒一次约工作 30 s</td><td class="num">370 µA ~ 1.6 mA</td></tr>
+    <tr><td>超低功耗休眠 60 min 周期唤醒</td><td>唤醒一次约工作 30 s</td><td class="num">130 ~ 600 µA</td></tr>
+  </table>
+  <div class="info">
+    <b>先看清一件事：</b>即使官方方案全部生效，<b>「保持服务器网络连接」也是 2~14 mA 级</b>（型号相关）；真正的微安级（8 µA~465 µA）那两行都写着<b>「不连接服务器」</b>。也就是说 —— <b>想保活，就便宜不了；想便宜，就得断线。</b>这跟本项目的 0.226 mA 完全不在一个量级上。
+  </div>
+
+  <h3>1.3 两个关键机制（官方原文）</h3>
+  <div class="quote">
+    「<b>数据发送完成后大约 12 秒后会自动进入低功耗</b>」<span class="mut">—— 反复出现在各型号产品页的功耗说明里</span>
+  </div>
+  <div class="quote">
+    「<b>PronetSetNetwt(1000)</b> 设置 DTU 网络内部循环时间单位 ms，新加的函数，<b>老固件不支持</b>，<b>老固件因为网络数据轮询太快，设置低功耗模式没效果</b>。」<br>
+    「<b>这个必须设置，要不然 DTU 固件无法进入低功耗</b>」<br>
+    「注意开启低功耗后 USB 会被关闭，没有日志输出。」<br>
+    <span class="mut">—— 官方《与服务器保持长连接低功耗实例》，并要求 <b>EPM/EHV 等固件版本 V2.0.9</b> 以上</span>
+  </div>
+  <div class="hl">
+    <b>这段官方说明，正好解释了我们的实测结果：</b>「网络数据轮询太快 → 设置低功耗模式没效果」。我们的 STM32 每 15 s 发一次心跳、每 60 s 探活一次，模组几乎一直在处理网络数据 —— 属于典型的「轮询太快」场景。
+  </div>
+
+  <h3>1.4 「保活」的真正机制：通道心跳包</h3>
+  <div class="quote">
+    网络协议命令（TCP/UDP/MQTT 通道配置）字段：<br>
+    「<b>发送心跳包间隔</b>　单位秒，<b>最小 60</b>，<b>用于维持设备与服务器的连接</b>，一般 <b>60~180 秒</b>内比较好」
+  </div>
+  <p>固件里下发的 MQTT 配置第三字段就是它：</p>
+  <pre>config,set,mqtt,1,uart,120,broker.emqx.io,1883,&lt;ICCID&gt;
+                     ↑
+                 心跳包间隔 120 s —— 这才是「保活」</pre>
+</div>
+
+<h2>2. 实测：三段受控对照（F-11 真值，同一块板、同一固件）</h2>
+<div class="card">
+  <p>三个工况全部确认：<code>PA3(V4G)=1</code>（模组已上电）、<code>_4g_state=14</code>（已连上服务器）。唯一变量是 <b>STM32 是否向模组说话</b>。</p>
+
+  <div class="bars">
+    <div class="bar b-a" style="height:168px"><span>59.3</span><i>A<br>心跳在跑</i></div>
+    <div class="bar b-c" style="height:41px"><span>14.6</span><i>C<br>STM32 静默</i></div>
+    <div class="bar b-d" style="height:41px"><span>14.6</span><i>D<br>静默 + lp,1</i></div>
+  </div>
+  <div class="legend">
+    <span><i class="dot b-a"></i>A：15 s 心跳 + 60 s 探活</span>
+    <span><i class="dot b-c"></i>C：停心跳/探活</span>
+    <span><i class="dot b-d"></i>D：C + 尝试 lp,1</span>
+  </div>
+  <p class="mut" style="text-align:center;margin-top:22px">柱高 = 电流中位值（整机，含 MCU）。采样 2 s 分块，F-11 真值。</p>
+
+  <table>
+    <tr><th style="width:30%">工况</th><th>中位</th><th>均值</th><th>电荷加权</th><th>说明</th></tr>
+    <tr>
+      <td><b>A</b> 在线 + STM32 每 15 s 心跳 + 60 s 探活</td>
+      <td class="num" style="color:var(--red)"><b>59.28 mA</b></td><td class="num">52.59</td><td class="num">55.68 mA</td>
+      <td>时程大部分 59~60 mA，偶有 18~21 mA 的 DRX 谷</td>
+    </tr>
+    <tr>
+      <td><b>C</b> 在线 + STM32 静默<br><span class="mut">（SWD 写 <code>dtu.low_power=1</code>，停心跳与探活）</span></td>
+      <td class="num" style="color:var(--green)"><b>14.64 mA</b></td><td class="num">19.52</td><td class="num">20.27 mA</td>
+      <td>稳定 14.5~14.9 mA；90 s 里只有 2 段 ~6 s 的 59 mA 尖峰（模组自己的通道心跳）</td>
+    </tr>
+    <tr>
+      <td><b>D</b> 同 C，另发 <code>config,set,lp,1</code></td>
+      <td class="num" style="color:var(--green)"><b>14.55 mA</b></td><td class="num">19.46</td><td class="num">20.20 mA</td>
+      <td>与 C <b>完全一致</b>（命令未生效，见 §4）</td>
+    </tr>
+    <tr>
+      <td>（复核）模组刚上线、心跳在跑</td><td class="num">57.94</td><td class="num">47.68</td><td class="num">47.68 mA</td>
+      <td>与 A 同量级，验证 A 可复现</td>
+    </tr>
+  </table>
+
+  <div class="good">
+    <b>C 段的时程（2 s 块，单位 mA）：</b><br>
+    <code>14.6 14.9 14.5 14.7 14.6 14.6 14.8 14.6 14.6 14.6 14.8 14.6 14.6 59.0 58.9 57.5 14.7 14.7 14.8 14.6 14.6 14.7 …</code><br>
+    一整片平整的 14.6 mA 底，中间两次约 6 s 的 59 mA 尖峰 —— 那是<b>模组自己在发通道心跳</b>（保活），和 MCU 无关。
+  </div>
+
+  <div class="hl">
+    <b>把 MCU 的底扣掉：</b>4G 断电 + MCU Run 实测 ≈ <b>2.4 mA</b>。所以模组净电流约为 ——<br>
+    · 有 15 s 心跳：≈ 57 mA（模组被 MCU 拽着几乎全程在线）<br>
+    · 无 MCU 流量：≈ 12 mA（模组自己维持注册 + 连接 + 120 s 心跳）
+  </div>
+</div>
+
+<h2>3. 关键发现：15 s 心跳把模组从 14.6 拖到 59 mA</h2>
+<div class="card">
+  <div class="good">
+    <b>只要 STM32 停止说话，模组立刻掉到 14.6 mA —— 省 75%。</b>
+  </div>
+  <p>这与官方那句「数据发送完成后大约 12 秒后会自动进入低功耗」在方向上是一致的：模组需要一段<strong>没有串口/网络活动的静默期</strong>，才能把射频和 CPU 降到低功耗态。我们的固件每 15 s 就发一条 <code>{"cmd":"ready"}</code>、每 60 s 还做一次 <code>+++ → ssta → AT+ENTM</code> 的探活，模组刚准备打盹就被叫醒。</p>
+  <div class="info">
+    <b>这正好印证了固件里那条设计：</b><code>DTU_SetLowPower(1)</code>（对应 MQTT 指令 <code>{"cmd":"sleep"}</code>）会<b>停掉 STM32 的心跳与探活</b>，把「维持连接」这件事交还给模组自己的 keepalive。<br>
+    <b>实测收益：</b>常在线模式的整机电流从 <b>≈59 mA 降到 ≈17 mA</b>（14.6 模组+MCU 运行态，或 12 + MCU Sleep 2.2 ≈ 14.2 mA）。这是本轮最有用的一条可操作结论 —— 如果将来真要「常在线保活」，<b>先把这个心跳停掉</b>。
+  </div>
+</div>
+
+<h2>4. `lp` 到底行不行？三处证据</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:34%">实验</th><th>做法</th><th>结果</th></tr>
+    <tr>
+      <td><b>① 整机 A/B（含 save 持久化）</b><br><span class="mut">2026-10-13 02:00</span></td>
+      <td>改宏 <code>DTU_LP_VALUE</code> 重烧固件，启动时先 <code>config,set,lp,&lt;0|1&gt;</code> 再 <code>config,set,save</code>（模组重启并持久化），各采 60 s</td>
+      <td><code>lp=0</code> 54.35 mA　vs　<code>lp=1</code> 54.15 mA<br><b>差 0.2 mA（0.4%）→ 无效果</b></td>
+    </tr>
+    <tr>
+      <td><b>② 运行时注入</b><br><span class="mut">本轮，透明模式下发</span></td>
+      <td>SWD 写 <code>g_dbg_tx</code> 直接下发 <code>config,set,lp,1</code></td>
+      <td>命令未进 DTU 解析器（透明模式只认 <code>+++</code> 后的指令模式）<br>电流 20.27 → 20.20 mA <b>无变化</b></td>
+    </tr>
+    <tr>
+      <td><b>③ 模组回执</b><br><span class="mut">最有说服力</span></td>
+      <td>固件启动流程里 <code>config,set,lp,0</code> 之后 600 ms 回读 <code>config,get,lp</code>，把应答存进 <code>lp_result</code>（0x20000028）</td>
+      <td>SWD 读出 <code>lp_result = "(no-response)"</code><br><b>模组对该命令根本没有应答</b></td>
+    </tr>
+  </table>
+  <div class="bad">
+    <b>判定：本模组（YED_DTU4 / Air780EPM）的 `config,lp` 特性不可用。</b>结合官方说明里「需要 EPM/EHV 固件 ≥ V2.0.9」「老固件…设置低功耗模式没效果」以及官方功耗表把 2~14 mA 的「保持连接」低功耗列在<b>特定「超低功耗」型号</b>（DGH-Y20000 / D780L 系列 / D100L1-Y 等）名下 —— 这类特性多半是<b>硬件+固件配套</b>的，不是通用透传固件的一个开关。
+  </div>
+  <div class="hl">
+    <b>唯一还没做到的一步：</b>重烧一个 <code>DTU_LP_VALUE=1</code> 的固件，在「STM32 静默」工况下再采一次（即 <b>静默 + lp,1</b> 的整机对照）。理论上如果 lp 生效，14.6 mA 有机会再降到几 mA。需要的话我可以做这一轮 —— 但按现有三处证据，预期仍是<b>无变化</b>。
+  </div>
+</div>
+
+<h2>5. 回答原问题：「这个是保持服务器的保活吗？」</h2>
+<div class="card">
+  <p><b>不是。</b>这是两件不同的事，只是经常被一条产品宣传语混在一起：</p>
+  <table>
+    <tr><th style="width:22%">概念</th><th>是什么</th><th>由谁提供</th><th>代价（本机实测）</th></tr>
+    <tr>
+      <td><b>保活</b><br><span class="mut">keep connection</span></td>
+      <td>让设备与服务器的 TCP/MQTT 会话不被清掉 —— 服务器侧看不到设备掉线</td>
+      <td><b>DTU 通道自带的「心跳包」</b><br>（官方规定 ≥60 s，推荐 60~180 s；我们配 120 s）</td>
+      <td>≥ <b>14.6 mA</b>（模组维持在线的最小实测值）</td>
+    </tr>
+    <tr>
+      <td><b>低功耗</b><br><span class="mut">lp</span></td>
+      <td>让设备「进入低功耗」—— 官方描述仅此一句</td>
+      <td><code>config,set,lp,1</code>（本模组无应答、无效果）</td>
+      <td>实测无效</td>
+    </tr>
+    <tr>
+      <td><b>银尔达的「低功耗保持连接」方案</b></td>
+      <td>把上面两件事打包：低功耗 + 3 分钟心跳 + 保持连接</td>
+      <td>需要特定「超低功耗」型号 / 配套固件</td>
+      <td>官方标称 <b>2 ~ 14 mA</b></td>
+    </tr>
+  </table>
+  <div class="good">
+    <b>所以：</b>「是保活吗？」—— <b>`lp` 本身不是保活机制，它只是低功耗方案的开关</b>（而且在本模组上是个没反应的开关）。真正做保活的是<b>通道心跳包</b>，它一直在跑，跟 `lp` 无关。<br>
+    <b>而「保活」这件事的代价，最低也要 15 mA 量级</b> —— 因为要保活就必须让模组持续注册 + 保持射频在线。
+  </div>
+</div>
+
+<h2>6. 对本工程的意义</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:34%">方案</th><th>整机电流</th><th>服务器看到的</th><th>适用</th></tr>
+    <tr>
+      <td><b>当前主路径</b>：断 4G 电 + MCU Stop + RTC 周期唤醒</td>
+      <td class="num" style="color:var(--green)"><b>0.226 mA</b>（睡态）<br>2 h 周期 ≈ 0.77 mA</td>
+      <td>每 2 h 上线 → 上报 → 下线</td>
+      <td><b>已完成，1 mA 目标超额达成</b></td>
+    </tr>
+    <tr>
+      <td>常在线保活（<code>{"cmd":"sleep"}</code> 模式，停 MCU 心跳）</td>
+      <td class="num">≈ 14.2 ~ 17 mA</td>
+      <td>始终在线，随时可下发指令</td>
+      <td>需要「随时可控」的场景</td>
+    </tr>
+    <tr>
+      <td>常在线 + MCU 15 s 心跳（当前默认）</td>
+      <td class="num" style="color:var(--red)">≈ 59 mA</td>
+      <td>始终在线，探活最勤</td>
+      <td>仅调试期；<b>量产建议关掉</b></td>
+    </tr>
+  </table>
+  <div class="hl">
+    <b>给项目的一句话建议：</b>保活与省电在本模组上是<b>互斥</b>的，差 65 倍。既然主路径已经是「断 4G 电 + Stop」，<code>lp</code> 这条路可以<b>彻底放弃</b>（已回滚 <code>DTU_LP_VALUE=0</code>）；但固件里的 <code>{"cmd":"sleep"}</code> 值得保留 —— 它是「要保活时最省电」的姿势，比现在默认的 15 s 心跳省 42 mA。
+  </div>
+</div>
+
+<h2>7. 复现与操作备忘</h2>
+<div class="card">
+  <pre>关键 RAM 符号（本轮固件）
+  dtu.c  static low_power = 0x20000590   # 1 => 停 STM32 心跳+探活
+  main.c g_low_power      = 0x20000341   # 1 => MCU 进 Sleep
+  _4g_state               = 0x200004D0   # 14 = READY(透传已连服务器)
+  g_lp_cycle / s_lp_state = 0x200004C1 / 0x200004C2
+  lp_result[128]          = 0x20000028   # 启动时 config,get,lp 的回执
+  g_dbg_tx[128]           = 0x200002C0   # SWD 注入任意字节给 4G 模组
+  GPIOA_ODR               = 0x4001080C   # bit3 = PA3 = V4G(1=上电)
+
+实测怎么造三个工况
+  A 在线+心跳 : 复位板子，等 _4g_state==14，直接采
+  C 静默      : SWD 写 low_power(0x20000590)=1（停心跳与探活），等 25 s 再采
+  D lp,1      : 同 C，再经 g_dbg_tx 发 config,set,lp,1（透明模式不解析，无效）
+  断电 Stop   : 下发 {"cmd":"lp_cycle","period_min":N}，模组断电 + MCU Stop
+
+银尔达命令要点
+  透明模式下 config,开头的行【不】被解析 —— 必须先 "+++" 进指令模式
+  通道心跳包间隔最小 60 s，用于维持设备与服务器的连接（我们配 120 s）
+  config,get,lp 在本模组无应答（lp_result = "(no-response)"）</pre>
+  <p class="mut">
+    数据：<code>tmp/f11/lp4g2_A_online.csv</code>（A）、<code>lp4g2_C_quiet.csv</code>（C）、<code>lp4g2_D_lp1.csv</code>（D）、
+    <code>lp4g_force_on.csv</code>、<code>lp4g3_lp1.csv</code>；对照：<code>baseline_lp0.csv</code> / <code>lp1_after.csv</code>（02:00）。
+    脚本：<code>tmp/lp4g_test2.py</code>、<code>tmp/diag_4g.py</code>、<code>tmp/ana_lp4g.py</code>。
+  </p>
+</div>
+
+<div class="mut" style="margin-top:26px;text-align:center">
+  车牌 ver2 低功耗项目 · 4G 模组 lp / 保活实测 · 2026-10-13 ·
+  相关：docs/lpcycle-power-time-verify.html、docs/low-power-1mA-plan.md §17
+</div>
+
+</body>
+</html>

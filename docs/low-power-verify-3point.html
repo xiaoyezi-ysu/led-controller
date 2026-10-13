@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>低功耗电流复测 · 三点对照（F-11 真值）</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --line:#e5e7eb; --ink:#1f2328; --mut:#6b7280;
+    --red:#d9534f; --blue:#2563eb; --green:#16a34a; --amber:#f59e0b; --purple:#7c3aed; --cyan:#0891b2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:32px 22px 64px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  h3{font-size:15px;margin:20px 0 8px;color:#374151}
+  .sub{color:var(--mut);font-size:13.5px;margin-bottom:26px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:6px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi .lab{font-size:12.5px;color:var(--mut);margin-bottom:6px}
+  .kpi .val{font-size:25px;font-weight:700;letter-spacing:-.4px}
+  .kpi .val small{font-size:13px;font-weight:500;color:var(--mut);margin-left:3px}
+  .kpi.good .val{color:var(--green)}
+  .kpi.warn .val{color:var(--amber)}
+  .kpi.bad .val{color:var(--red)}
+  .kpi.blue .val{color:var(--blue)}
+  .kpi.pur .val{color:var(--purple)}
+  .chartbox{position:relative;height:300px}
+  .chartbox.sm{height:220px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left}
+  th{background:#fafbfc;font-weight:600;color:#374151;font-size:13px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}
+  .tag.ok{background:#e8f6ee;color:#15803d}
+  .tag.no{background:#fdeceb;color:#b91c1c}
+  .tag.q{background:#fff5e6;color:#b45309}
+  .hl{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .hl b{color:#b45309}
+  .ok{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .ok b{color:#15803d}
+  code{background:#f3f4f6;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+       font:13px/1.5 "Cascadia Mono",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;
+      font:13px/1.6 "Cascadia Mono",Consolas,monospace}
+  ul{margin:8px 0 0 0;padding-left:22px}
+  li{margin:4px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:780px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>低功耗电流复测 —— 三点对照 <span style="color:var(--green)">3.47 mA → 2.31 mA</span></h1>
+  <div class="sub">2026-10-13 凌晨 · 车牌 ver2 · 8 MHz 固件（HSE 8 MHz，PLL off）· AFU F-11 真值表串在探针 VCC 与板子 VCC 之间 · 表在 <code>COM4</code> · 电压通道未接（按 3.3 V 计）</div>
+
+  <div class="kpis">
+    <div class="kpi bad"><div class="lab">A · 4G 上电（PA3=1）</div><div class="val">59.40 <small>mA</small></div></div>
+    <div class="kpi good"><div class="lab">B · 4G 断电（PA3=0，8 MHz Run）</div><div class="val">3.47 <small>mA</small></div></div>
+    <div class="kpi blue"><div class="lab">B′ · 4G 断电（完全静默）</div><div class="val">3.02 <small>mA</small></div></div>
+    <div class="kpi pur"><div class="lab">C · 4G 断电 + Stop</div><div class="val">2.31 <small>mA</small></div></div>
+  </div>
+
+  <h2>1. 结论先说</h2>
+  <div class="card">
+    <div class="ok">
+      <b>此前记录的低功耗电流 <span style="font-size:17px">3.44 mA</span> —— 本次同条件复测 <span style="font-size:17px">3.47 mA</span>，验证成立。</b><br>
+      真实静态电流就在 <b>3 mA 量级</b>：4G 断电、8 MHz 空闲运行、LED 全灭。此前从探针读数扣除 6 mA 零点偏置推出的
+      「8 MHz ≈ 4.25 mA」偏保守；直接真值读数给出 <b>3.47 mA</b>。<br>
+      <b>Stop 模式实测 2.31 mA</b>，与此前推算的 2.2 mA 吻合（差 0.1 mA）。
+    </div>
+    <div class="hl">
+      <b>增量（本组数据，全部为真值、无需再扣零点）：</b><br>
+      · 4G 模组 = 59.40 − 3.47 = <b>≈ 55.9 mA</b>（模组搜网/注册态；此前记的 42.16 mA 是模组空闲态）<br>
+      · Stop 相对 Run 省 = 3.47 − 2.31 = <b>≈ 1.16 mA</b><br>
+      · 探针零点偏置 = 9.44（探针）− 3.47（真值）= <b>5.97 mA</b>，与此前 5.88–6.30 mA 一致 ✓
+    </div>
+  </div>
+
+  <h2>2. 三点对照（全部为 F-11 真值）</h2>
+  <div class="card">
+    <div class="chartbox"><canvas id="bars"></canvas></div>
+    <table style="margin-top:16px">
+      <thead><tr><th>状态</th><th class="num">中位</th><th class="num">均值</th><th class="num">最小</th><th class="num">最大</th><th>样本 / 时长</th></tr></thead>
+      <tbody>
+        <tr><td><b>A</b> 4G 上电（PA3=1）</td><td class="num"><b>59.40</b></td><td class="num">51.31</td><td class="num">13.86</td><td class="num">71.21</td><td>170 / 16.9 s</td></tr>
+        <tr><td><b>B</b> 4G 断电（PA3=0）</td><td class="num"><b>3.47</b></td><td class="num">3.60</td><td class="num">3.44</td><td class="num">4.37</td><td>204 / 20.3 s</td></tr>
+        <tr><td><b>B′</b> 4G 断电（静默后）</td><td class="num"><b>3.02</b></td><td class="num">3.16</td><td class="num">2.99</td><td class="num">3.94</td><td>204 / 24.4 s</td></tr>
+        <tr><td><b>C</b> 4G 断电 + Stop</td><td class="num"><b>2.31</b></td><td class="num">2.69</td><td class="num">2.27</td><td class="num">5.47</td><td>204 / 20.4 s</td></tr>
+      </tbody>
+    </table>
+    <p style="color:var(--mut);font-size:13px;margin-top:12px">
+      A 的均值和 B/A 的 spread 很大，是因为 4G 模组在 <b>59 mA ↔ 14 mA</b> 两个平台间周期性切换（≈ 每 3.4 s，
+      见下方时序图）——那是模组搜网/DRX 的固有节拍，不是板子问题。
+    </p>
+  </div>
+
+  <h2>3. 时序：4G 在 &lt;60↔14&gt; 之间切，断掉后曲线立刻平整</h2>
+  <div class="card">
+    <div class="grid2">
+      <div>
+        <h3 style="margin-top:0">A · 4G 上电（30 s）</h3>
+        <div class="chartbox sm"><canvas id="tsA"></canvas></div>
+      </div>
+      <div>
+        <h3 style="margin-top:0">B · 4G 断电（20 s）</h3>
+        <div class="chartbox sm"><canvas id="tsB"></canvas></div>
+      </div>
+    </div>
+    <p style="color:var(--mut);font-size:13px;margin-top:12px">
+      断电后曲线从「宽幅方波」变成「窄带毛刺」：中位 3.47 mA、波动 ±0.9 mA，峰 4.37 mA 与固件 500 ms 周期的
+      SC7A20H 软 I2C 读取 / LED PWM 节拍相符。
+    </p>
+  </div>
+
+  <h2>4. 探针 vs F-11：零点偏置再证</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>来源</th><th class="num">电流</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><b>F-11（真值）</b></td><td class="num"><b>3.47 mA</b></td><td>B 状态下 20.3 s / 204 帧</td></tr>
+        <tr><td>探针 <code>power-read</code></td><td class="num">8.84–10.29 mA<br><small>中位 ≈ 9.44</small></td><td>同一状态</td></tr>
+        <tr><td><b>探针 − 真值</b></td><td class="num"><b>5.97 mA</b></td><td>与此前测得的零点 5.88–6.30 mA 吻合 ✓</td></tr>
+      </tbody>
+    </table>
+    <div class="hl" style="margin-top:16px">
+      <b>规范延续：</b>探针 <code>power-read</code> 有 ≈ 6 mA 固定偏置，<b>只可用于对比差值，不可当绝对真值</b>。
+      要绝对电流，用 F-11，或把读数减去 6 mA。
+    </div>
+  </div>
+
+  <h2>5. Stop 模式的确证（顺带发现的硬证据）</h2>
+  <div class="card">
+    <pre>写 DBGMCU_CR(0xE0042004) = 0x02   ← DBG_STOP，保住 SWD
+写 SCB_SCR (0xE000ED10) = 0x04   ← SLEEPDEEP，下一个 __WFI() 进 Stop
+
+进 Stop 后读寄存器：
+  RCC_CR   = 0x00000000   ← AHB/APB 外设时钟已停，总线读回 0
+  RCC_CFGR = 0x00000000
+  GPIOA_CRL= 0x00000000
+  GPIOA_ODR= 0x00000000
+  ─────────────────────────
+  SCB_SCR    = 0x00000004   ← 内核私有区仍可读
+  DBGMCU_CR  = 0x00000002
+  SysTick_VAL= 0x00000A02 → 0x000019AC → 0x00000C73  ← 仍在计数</pre>
+    <p style="color:var(--mut);font-size:13px">
+      <b>两条互证的证据：</b>① 外设寄存器整片读 0（时钟停），而内核私有区正常 —— 这是 Stop 的典型指纹；
+      ② SysTick 仍在计数 —— 说明 MCU 在 <b>Stop 与唤醒之间往复</b>（UART 等中断反复唤醒），
+      所以 2.31 mA 是「断续 Stop」的平均值，不是理论上的纯 Stop 下限。
+    </p>
+    <div class="ok">
+      退出 Stop：<code>写 SCB_SCR = 0</code> + <code>写 DBGMCU_CR = 0</code>，板子回到 8 MHz Run（3.02 mA），
+      寄存器读数恢复正常（<code>RCC_CR=0x00035780</code>、<code>CFGR=0x00000005</code>）。<b>全程未变砖。</b>
+    </div>
+  </div>
+
+  <h2>6. 与前次记录的对照</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>项目</th><th class="num">此前记录</th><th class="num">本次复测</th><th>一致性</th></tr></thead>
+      <tbody>
+        <tr><td>低功耗静态（4G 断 / 8 MHz）</td><td class="num">3.44 mA</td><td class="num"><b>3.47 mA</b></td><td><span class="tag ok">✓ 复现</span></td></tr>
+        <tr><td>Stop 模式真值</td><td class="num">≈ 2.2 mA（推算）</td><td class="num"><b>2.31 mA</b></td><td><span class="tag ok">✓ 吻合</span></td></tr>
+        <tr><td>探针零点偏置</td><td class="num">5.88–6.30 mA</td><td class="num">5.97 mA</td><td><span class="tag ok">✓ 吻合</span></td></tr>
+        <tr><td>4G 模组净增</td><td class="num">42.16 mA（空闲）</td><td class="num">55.9 mA（搜网）</td><td><span class="tag q">状态不同</span></td></tr>
+        <tr><td>8 MHz 相对 72 MHz</td><td class="num">−52%（省 11.8 mA）</td><td class="num">—</td><td><span class="tag q">未复测</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>7. 下一步</h2>
+  <div class="card">
+    <ul>
+      <li><b>B′ 与 B 差 0.45 mA</b>（3.02 vs 3.47）——疑似 Stop 往返后 DTU/USART 状态机停摆。若要做 1 mA 目标，
+          应把这个 0.45 mA 的来源也找出来（读 <code>USART1/USART3</code> 状态、DTU 状态机变量）。</li>
+      <li><b>去掉 LEDB2 常亮</b>（R24 510 Ω，≈1.4 mA）——这是达成 1 mA 最直接的一刀。</li>
+      <li><b>纯 Stop 下探</b>：把唤醒源（UART RX 中断）暂时屏蔽，测真正静止的 Stop 下限。</li>
+      <li>接好 F-11 电压通道（<code>IN+</code>→探针 VCC、<code>IN−</code>→探针 GND），拿到真实电压而非假定 3.3 V。</li>
+    </ul>
+  </div>
+
+  <p style="color:var(--mut);font-size:12.5px;margin-top:26px">
+    数据来源：AFU F-11（COM4，38400 8N1，固件 <code>Dev1.0 20231111</code>）· MKLink 探针 <code>usb-6bee5de2ad9b32857ecc1695</code> ·
+    原始 CSV：<code>f11_now.csv</code>（A）、<code>f11_lowpower.csv</code>（B）。报告生成于 2026-10-13 凌晨。
+  </p>
+
+</div>
+
+<script>
+const CSS = getComputedStyle(document.documentElement);
+const ink = CSS.getPropertyValue('--ink').trim();
+const mut = CSS.getPropertyValue('--mut').trim();
+Chart.defaults.color = mut;
+Chart.defaults.font.family = '-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif';
+
+new Chart(document.getElementById('bars'), {
+  type:'bar',
+  data:{
+    labels:['A · 4G 上电','B · 4G 断电','B′ · 静默','C · Stop'],
+    datasets:[{
+      label:'中位电流 (mA)',
+      data:[59.40, 3.47, 3.02, 2.31],
+      backgroundColor:['#d9534f','#16a34a','#0891b2','#7c3aed'],
+      borderRadius:6, maxBarThickness:70
+    }]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false},
+      tooltip:{callbacks:{label:c=>c.parsed.y+' mA'}} },
+    scales:{
+      y:{ beginAtZero:true, title:{display:true,text:'电流 (mA)'} }
+    }
+  }
+});
+
+function tsChart(id, csv, color, title){
+  fetch(csv).then(r=>r.text()).then(t=>{
+    const rows = t.trim().split(/\r?\n/).slice(1);
+    const pts = rows.map((l,i)=>{
+      const c = l.split(',');
+      return { x:i*(30/rows.length), y:parseFloat(c[2]) };
+    }).filter(p=>!isNaN(p.y));
+    new Chart(document.getElementById(id), {
+      type:'line',
+      data:{ datasets:[{ label:title, data:pts, borderColor:color,
+        backgroundColor:color+'22', borderWidth:1.4, pointRadius:0, fill:true, tension:.15 }]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false},
+          tooltip:{callbacks:{label:c=>c.parsed.y.toFixed(2)+' mA'}} },
+        scales:{
+          x:{ type:'linear', title:{display:true,text:'时间 (s)'}, ticks:{maxTicksLimit:6} },
+          y:{ title:{display:true,text:'mA'}, suggestedMin:0 }
+        }
+      }
+    });
+  }).catch(e=>{
+    document.getElementById(id).parentElement.innerHTML =
+      '<div style="color:#6b7280;font-size:13px;padding-top:80px;text-align:center">'+
+      '（需联网加载 Chart.js 才能绘制时序，数据见同目录 CSV）</div>';
+  });
+}
+tsChart('tsA', 'f11_now.csv', '#d9534f', 'A 4G 上电');
+tsChart('tsB', 'f11_lowpower.csv', '#16a34a', 'B 4G 断电');
+</script>
+</body>
+</html>

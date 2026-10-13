@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>低功耗路线图 —— 从 22.5 mA 到 1.16 mA</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --line:#e5e7eb; --ink:#1f2328; --mut:#6b7280;
+    --red:#d9534f; --blue:#2563eb; --green:#16a34a; --amber:#d97706; --purple:#7c3aed; --cyan:#0891b2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:32px 22px 64px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .sub{color:var(--mut);font-size:13.5px;margin-bottom:26px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:6px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi .lab{font-size:12.5px;color:var(--mut);margin-bottom:6px}
+  .kpi .val{font-size:25px;font-weight:700;letter-spacing:-.4px}
+  .kpi .val small{font-size:13px;font-weight:500;color:var(--mut);margin-left:3px}
+  .kpi.good .val{color:var(--green)}
+  .kpi.warn .val{color:var(--amber)}
+  .kpi.blue .val{color:var(--blue)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;vertical-align:top}
+  th{background:#fafbfc;font-weight:600;color:#374151;font-size:13px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+  .tag.ok{background:#e8f6ee;color:#15803d}
+  .tag.no{background:#fdeceb;color:#b91c1c}
+  .tag.q{background:#fff5e6;color:#b45309}
+  .hl{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .hl b{color:#b45309}
+  .ok{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .ok b{color:#15803d}
+  code{background:#f3f4f6;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+       font:13px/1.5 "Cascadia Mono",Consolas,monospace}
+  ul{margin:8px 0 0 0;padding-left:22px}
+  li{margin:4px 0}
+  .flow svg{width:100%;height:auto;display:block}
+
+  /* 4G 旁支 */
+  .g4{display:flex;align-items:stretch;gap:14px;flex-wrap:wrap}
+  .g4box{flex:1 1 260px;border-radius:12px;padding:14px 18px;border:1px solid var(--line);background:#fff}
+  .g4box .t{font-size:13px;color:var(--mut)}
+  .g4box .v{font-size:23px;font-weight:700;margin:2px 0}
+  .g4box .d{font-size:12.5px;color:var(--mut)}
+  .g4box.on{border-color:#fecaca;background:#fff7f7}
+  .g4box.on .v{color:var(--red)}
+  .g4box.off .v{color:var(--green)}
+  .g4arrow{flex:0 0 230px;display:flex;flex-direction:column;justify-content:center;text-align:center;
+           border:1px dashed #cbd5e1;border-radius:12px;padding:10px 14px;background:#f8fafc}
+  .g4arrow .s{font-weight:700;font-size:14px;color:var(--ink)}
+  .g4arrow .m{font-size:12px;color:var(--mut);margin:2px 0}
+  .g4arrow .dl{font-size:17px;font-weight:800;color:var(--green)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>低功耗路线图 —— 从 22.5 mA 到 <span style="color:var(--green)">1.16 mA</span></h1>
+  <div class="sub">2026-10-13 · 车牌 ver2 · STM32F103C8T6 · 每步方法 / 达到的电流 / 踩过的坑 ·
+    配套文档：<code>low-power-1mA-plan.md</code>（§9–§14 详细记录）</div>
+
+  <div class="kpis">
+    <div class="kpi warn"><div class="lab">起点 · 72 MHz Run</div><div class="val">≈22.5 <small>mA</small></div></div>
+    <div class="kpi good"><div class="lab">终点 · 8 MHz Stop + 拆 R24</div><div class="val">1.162 <small>mA</small></div></div>
+    <div class="kpi blue"><div class="lab">累计降幅</div><div class="val">≈95 <small>%</small></div></div>
+    <div class="kpi warn"><div class="lab">距 1 mA 目标</div><div class="val">+0.16 <small>mA</small></div></div>
+  </div>
+
+  <h2>1. 主链流程图（MCU 侧，全程 4G 断电 · LED 全灭）</h2>
+  <div class="card flow">
+    <svg viewBox="0 0 960 632" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI','Microsoft YaHei',sans-serif">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+        </marker>
+      </defs>
+
+      <!-- ══ 状态节点 S0 ══ -->
+      <rect x="30" y="8" width="360" height="84" rx="12" fill="#ffffff" stroke="#e5e7eb"/>
+      <text x="50" y="34" font-size="14.5" font-weight="600" fill="#1f2328">起步固件 · 72 MHz Run</text>
+      <text x="50" y="57" font-size="12.5" fill="#6b7280">4G 断电 · LED 全灭</text>
+      <text x="370" y="46" font-size="20" font-weight="700" fill="#d97706" text-anchor="end">≈ 22.5 mA</text>
+      <text x="370" y="70" font-size="11.5" fill="#6b7280" text-anchor="end">探针原始值</text>
+
+      <!-- 箭头 S0 → S1 -->
+      <line x1="210" y1="92" x2="210" y2="172" stroke="#94a3b8" stroke-width="2" marker-end="url(#arr)"/>
+      <circle cx="210" cy="132" r="13" fill="#2563eb"/>
+      <text x="210" y="137" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+      <line x1="226" y1="132" x2="466" y2="132" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+      <!-- 方法卡 ① -->
+      <rect x="470" y="82" width="460" height="100" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+      <rect x="470" y="82" width="5" height="100" rx="2" fill="#2563eb"/>
+      <text x="492" y="110" font-size="14.5" font-weight="700" fill="#1f2328">① L1 · 时钟降频</text>
+      <text x="492" y="133" font-size="12.5" fill="#6b7280">SystemClock_Config：关 PLL，HSE 8 MHz 直供 + Flash 0 等待 + 关 HSI</text>
+      <text x="492" y="155" font-size="12.5" fill="#6b7280">宏 <tspan font-family="Consolas,monospace">CPU_CLOCK_8MHZ</tspan> 一行开关 · 零风险 · 注释即回滚</text>
+      <text x="912" y="118" font-size="17" font-weight="800" fill="#16a34a" text-anchor="end">−11.8 mA</text>
+      <text x="912" y="140" font-size="12" fill="#6b7280" text-anchor="end">（−52%）</text>
+
+      <!-- ══ 状态节点 S1 ══ -->
+      <rect x="30" y="180" width="360" height="84" rx="12" fill="#ffffff" stroke="#e5e7eb"/>
+      <text x="50" y="206" font-size="14.5" font-weight="600" fill="#1f2328">① 后 · 8 MHz Run</text>
+      <text x="50" y="229" font-size="12.5" fill="#6b7280">4G 断电 · LED 全灭</text>
+      <text x="370" y="218" font-size="20" font-weight="700" fill="#d97706" text-anchor="end">≈ 10.5 mA</text>
+      <text x="370" y="242" font-size="11.5" fill="#6b7280" text-anchor="end">探针原始 / 真值 ≈3.5</text>
+
+      <!-- 箭头 S1 → S2 -->
+      <line x1="210" y1="264" x2="210" y2="344" stroke="#94a3b8" stroke-width="2" marker-end="url(#arr)"/>
+      <circle cx="210" cy="304" r="13" fill="#7c3aed"/>
+      <text x="210" y="309" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+      <line x1="226" y1="304" x2="466" y2="304" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+      <!-- 方法卡 ③ -->
+      <rect x="470" y="254" width="460" height="100" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+      <rect x="470" y="254" width="5" height="100" rx="2" fill="#7c3aed"/>
+      <text x="492" y="282" font-size="14.5" font-weight="700" fill="#1f2328">③ L2 · 进 Stop</text>
+      <text x="492" y="305" font-size="12.5" fill="#6b7280">DBGMCU_CR=0x02（保 SWD）+ SCB_SCR=0x04（SLEEPDEEP）+ WFI()</text>
+      <text x="492" y="327" font-size="12.5" fill="#b45309">⚠ 进 Stop 后只能被 EXTI 唤醒 / 复位退出（见踩坑表）</text>
+      <text x="912" y="290" font-size="17" font-weight="800" fill="#16a34a" text-anchor="end">−1.16 mA</text>
+      <text x="912" y="312" font-size="12" fill="#6b7280" text-anchor="end">Run → Stop</text>
+
+      <!-- ══ 状态节点 S2 ══ -->
+      <rect x="30" y="352" width="360" height="84" rx="12" fill="#ffffff" stroke="#e5e7eb"/>
+      <text x="50" y="378" font-size="14.5" font-weight="600" fill="#1f2328">③ 后 · 8 MHz Stop</text>
+      <text x="50" y="401" font-size="12.5" fill="#6b7280">4G 断电 · LED 全灭 · SysTick 仍跳（断续 Stop）</text>
+      <text x="370" y="390" font-size="20" font-weight="700" fill="#2563eb" text-anchor="end">2.31 mA</text>
+      <text x="370" y="414" font-size="11.5" fill="#6b7280" text-anchor="end">F-11 真值</text>
+
+      <!-- 箭头 S2 → S3 -->
+      <line x1="210" y1="436" x2="210" y2="516" stroke="#94a3b8" stroke-width="2" marker-end="url(#arr)"/>
+      <circle cx="210" cy="476" r="13" fill="#16a34a"/>
+      <text x="210" y="481" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">4</text>
+      <line x1="226" y1="476" x2="466" y2="476" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+      <!-- 方法卡 ④ -->
+      <rect x="470" y="426" width="460" height="100" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+      <rect x="470" y="426" width="5" height="100" rx="2" fill="#16a34a"/>
+      <text x="492" y="454" font-size="14.5" font-weight="700" fill="#1f2328">④ · 断开 R24（硬件改动）</text>
+      <text x="492" y="477" font-size="12.5" fill="#6b7280">拆掉 LEDB2 蓝灯常亮的 510 Ω 限流电阻 —— 它跨 VCC33 常亮，固件关不掉</text>
+      <text x="492" y="499" font-size="12.5" fill="#6b7280">Run / Stop 下耗电一样 ≈1.1 mA（两组实测 Δ −1.08 / −1.15 互证）</text>
+      <text x="912" y="462" font-size="17" font-weight="800" fill="#16a34a" text-anchor="end">−1.15 mA</text>
+      <text x="912" y="484" font-size="12" fill="#6b7280" text-anchor="end">Stop → 新低</text>
+
+      <!-- ══ 目标节点 S3 ══ -->
+      <rect x="30" y="524" width="360" height="96" rx="12" fill="#ecfdf5" stroke="#34d399" stroke-width="1.5"/>
+      <text x="50" y="552" font-size="14.5" font-weight="700" fill="#15803d">🎯 ④ 后 · 8 MHz Stop + 拆 R24</text>
+      <text x="50" y="575" font-size="12.5" fill="#6b7280">4G 断电 · LED 全灭 · 读数极稳（1.162/1.163/1.164/1.162）</text>
+      <text x="370" y="572" font-size="26" font-weight="800" fill="#16a34a" text-anchor="end">1.162 mA</text>
+      <text x="370" y="598" font-size="11.5" fill="#15803d" text-anchor="end">F-11 真值 · 1 mA 量级达成 ✅</text>
+    </svg>
+  </div>
+
+  <h2>2. 旁支 · 4G 模组（与 MCU 状态正交，全链路最大单项）</h2>
+  <div class="card">
+    <div class="g4">
+      <div class="g4box on">
+        <div class="t">4G 上电（PA3=1，V4G 有电）</div>
+        <div class="v">59.40 mA</div>
+        <div class="d">F-11 真值 · 搜网 / DRX 在 59 ↔ 14 mA 间周期切换（≈3.4 s 节拍）</div>
+      </div>
+      <div class="g4arrow">
+        <div class="s">② 关 4G 电源</div>
+        <div class="m">SWD 清 GPIOA_ODR bit3<br>→ V4G 断电（按需上电）</div>
+        <div class="dl">−55.9 mA</div>
+      </div>
+      <div class="g4box off">
+        <div class="t">4G 断电（PA3=0）</div>
+        <div class="v">3.47 mA</div>
+        <div class="d">F-11 真值 · 静默后可到 3.02 mA（B′，差 0.45 疑似 DTU 状态机停摆）</div>
+      </div>
+    </div>
+    <div class="hl" style="margin-bottom:0">
+      <b>注意口径：</b>4G 是与 MCU 正交的一个维度 —— 只要 PA3=1，无论 MCU 跑多快都 +55.9 mA。
+      起点值 22.5 mA 是 <b>4G 已断</b>时测的；「4G 常连 MQTT（最低 ~35 mA）」与「1 mA」物理互斥，必须按需上电。
+      另：固件复位后 <code>V4G_Init()</code> 会自动拉高 PA3，4G 重新上电回到 ~60 mA。
+    </div>
+  </div>
+
+  <h2>3. 每步一览（方法 / 电流 / 风险）</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>步</th><th>方法（怎么做的）</th><th class="num">达到的电流</th><th class="num">省下</th><th>风险 / 回滚</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>① L1</b></td>
+          <td><code>SystemClock_Config()</code> 关 PLL，HSE 8 MHz 直供，Flash 0 等待，<code>HSI_DISABLE</code>；宏 <code>CPU_CLOCK_8MHZ</code> 一行开关</td>
+          <td class="num">22.5 → <b>10.5 mA</b><br><small style="color:var(--mut)">探针原始</small></td>
+          <td class="num" style="color:var(--green)"><b>−11.8 mA</b><br><small>（−52%）</small></td>
+          <td>零风险；注释宏即回滚；不碰 SWD / 选项字节</td>
+        </tr>
+        <tr>
+          <td><b>② 关 4G</b></td>
+          <td>SWD 写 <code>GPIOA_ODR</code> 清 bit3（4 字节 <code>0x04 0xA4 0x00 0x00</code>）→ V4G 断电</td>
+          <td class="num">59.40 → <b>3.47 mA</b><br><small style="color:var(--mut)">F-11 真值</small></td>
+          <td class="num" style="color:var(--green)"><b>−55.9 mA</b></td>
+          <td>固件下次复位自动拉高 PA3，4G 回 ~60 mA</td>
+        </tr>
+        <tr>
+          <td><b>③ L2</b></td>
+          <td><code>DBGMCU_CR=0x02</code>（保 SWD）+ <code>SCB_SCR=0x04</code>（SLEEPDEEP），主循环 <code>WFI()</code> 进 Stop</td>
+          <td class="num">3.47 → <b>2.31 mA</b><br><small style="color:var(--mut)">F-11 真值</small></td>
+          <td class="num" style="color:var(--green)"><b>−1.16 mA</b></td>
+          <td>进 Stop 后只能 EXTI / 复位退出（见下表）</td>
+        </tr>
+        <tr>
+          <td><b>④ 拆 R24</b></td>
+          <td>硬件断开 R24（510 Ω，串在 VCC33 与 LEDB2 之间）；或改由 GPIO 控制</td>
+          <td class="num">2.31 → <b>1.162 mA</b><br><small style="color:var(--mut)">F-11 真值</small></td>
+          <td class="num" style="color:var(--green)"><b>−1.15 mA</b></td>
+          <td>改板件；常亮在 Run / Stop 下耗电一样</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="ok" style="margin-bottom:0">
+      <b>⇒ 1 mA 量级达成。</b>距 1.00 mA 还差 0.16 mA，来自 Stop↔唤醒往复抖动 + LDO 静态 / 漏电。
+      下一步：固件化 Stop（<code>HAL_PWR_EnterSTOPMode()</code> + EXTI 唤醒）并关掉非必要周期中断。
+    </div>
+  </div>
+
+  <h2>4. ⚠️ 遇到的问题（踩坑记录）与对策</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th style="width:90px">阶段</th><th style="width:250px">问题</th><th>现象 / 代价</th><th>解决方法</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>① 调试</td>
+          <td><code>mklink write-ram</code> <b>重建整个 32 位字</b>，未写字节被清零</td>
+          <td>写 CCR 高字节把 16 位寄存器清 0 → 误判「8 MHz 下 LED 不亮」；写 <code>GPIOA_CRH</code> 高字节打断 USART1 → 4G 通信断（42→12 mA）</td>
+          <td>多字段寄存器<b>一次写满 4 字节</b>，16 位寄存器<b>只写低字节</b>；误写后<b>重新烧录</b>恢复</td>
+        </tr>
+        <tr>
+          <td>③ 判定</td>
+          <td>探针 <code>power-read</code> 存在 <b>≈6 mA 零点偏置</b>且漂移</td>
+          <td>曾把 8.20 mA 当成「无法解释的神秘固定负载」，方向几乎走偏</td>
+          <td>改用 <b>F-11 真值表</b>独立互证；每次对比前先测零点，绝对电流 = 读数 − 零点</td>
+        </tr>
+        <tr>
+          <td>③ 判定</td>
+          <td>进 Stop 后 AHB/APB 寄存器<b>整片读 0</b></td>
+          <td>一度以为「寄存器被清零 / 固件挂了」，怀疑变砖</td>
+          <td>认作 <b>Stop 指纹</b>（内核私有区 <code>SCB_SCR</code>/<code>DBGMCU_CR</code>/<code>SysTick</code> 仍可读）；清标志后读数立即复原</td>
+        </tr>
+        <tr>
+          <td>④ 收尾</td>
+          <td>进 Stop 后清 <code>SCB_SCR=0</code> <b>出不来</b></td>
+          <td>电流卡在 <b>1.94 mA</b> 中间态（既非 Run 2.40 也非 Stop 1.16）</td>
+          <td><b>Stop 只能被 EXTI 唤醒</b>，内核异常（SysTick）无效；唯一可靠退出 = <b>复位</b>（<code>mklink reset</code> / SW4），复位后未变砖</td>
+        </tr>
+        <tr>
+          <td>全程</td>
+          <td><code>mklink</code> 从 PATH 漂没（<code>command not found</code>）</td>
+          <td>所有命令失败</td>
+          <td>用绝对路径 <code>...\envs\default\Scripts\mklink.exe</code></td>
+        </tr>
+        <tr>
+          <td>全程</td>
+          <td>电表 USB 掉线会<b>切断被测回路</b></td>
+          <td>表一消失，板子立刻断电（<code>idcode=0x0</code>、电流退回零点）</td>
+          <td>测完不要随手拔 Type-C；表串在探针 VCC 与板子 VCC 之间</td>
+        </tr>
+        <tr>
+          <td>硬件</td>
+          <td>LEDB2 + R24 510 Ω <b>跨 VCC33 常亮，固件关不掉</b></td>
+          <td>常亮吃 ≈1.1 mA，1 mA 目标最大的单项拦路虎</td>
+          <td><b>硬件断开 R24</b>（或改由 GPIO 控制）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="color:var(--mut);font-size:12.5px;margin-top:26px">
+    数据来源：AFU F-11（<code>COM4</code>，38400 8N1，协议 <code>电流µA,电压mV</code>）·
+    MKLink 探针 <code>usb-6bee5de2ad9b32857ecc1695</code> · 本图纯 SVG / CSS，无外部依赖，可离线打开。
+  </p>
+
+</div>
+</body>
+</html>

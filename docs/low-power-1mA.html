@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>整板电流降到 1 mA 的方案（且不变砖）</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root{
+    --bg:#ffffff; --bg2:#f6f5f1; --fg:#1f1f1e; --fg2:#5f5e5a; --fg3:#888780;
+    --bd:rgba(0,0,0,.12); --card:#ffffff; --accent:#378ADD;
+    --good:#0F8A5F; --warn:#C05621; --bad:#C0392B;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#1c1c1b; --bg2:#262625; --fg:#f1efe8; --fg2:#b4b2a9; --fg3:#888780;
+      --bd:rgba(255,255,255,.16); --card:#242423; --accent:#85B7EB;
+      --good:#4ECBA0; --warn:#E8A87C; --bad:#EB7A6E; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.65;font-weight:400;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 24px 64px;}
+  h1{font-size:22px;font-weight:500;margin:0 0 6px;}
+  .sub{color:var(--fg2);font-size:13px;margin:0 0 4px;}
+  .meta{color:var(--fg3);font-size:12px;margin:0 0 28px;}
+  h2{font-size:16px;font-weight:500;margin:36px 0 12px;padding-bottom:8px;border-bottom:0.5px solid var(--bd);}
+  h3{font-size:14px;font-weight:500;margin:22px 0 10px;color:var(--fg);}
+  p{margin:10px 0;color:var(--fg);}
+  ul{margin:10px 0 10px 20px;padding:0;}
+  li{margin:5px 0;}
+  .muted{color:var(--fg2);}
+  code{background:var(--bg2);padding:1px 5px;border-radius:4px;font-size:12.5px;
+    font-family:ui-monospace,Consolas,"Courier New",monospace;}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0;}
+  .card{background:var(--bg2);border-radius:12px;padding:14px 16px;}
+  .card .lbl{font-size:12px;color:var(--fg2);margin-bottom:4px;}
+  .card .num{font-size:24px;font-weight:500;line-height:1.2;}
+  .card .unit{font-size:13px;color:var(--fg2);font-weight:400;}
+  .chartbox{background:var(--card);border:0.5px solid var(--bd);border-radius:12px;padding:16px 18px;margin:14px 0;}
+  .chartbox h3{margin-top:0;}
+  .cv{position:relative;width:100%;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin:12px 0;}
+  th,td{padding:7px 8px;border-bottom:0.5px solid var(--bd);text-align:right;white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;white-space:normal;}
+  thead th{color:var(--fg2);font-weight:500;}
+  tbody tr.hl{background:var(--bg2);}
+  .callout{background:var(--bg2);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;
+    padding:12px 16px;margin:14px 0;}
+  .callout.bad{border-left-color:var(--bad);}
+  .callout.good{border-left-color:var(--good);}
+  .callout.warn{border-left-color:var(--warn);}
+  .callout .t{font-weight:500;margin-bottom:4px;}
+  /* 状态机时序 */
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:16px 0;font-size:12.5px;}
+  .step{background:var(--bg2);border:0.5px solid var(--bd);border-radius:8px;padding:8px 11px;text-align:center;}
+  .step .s1{font-weight:500;}
+  .step .s2{color:var(--fg2);font-size:11px;}
+  .arw{color:var(--fg3);}
+  .step.stop{border-color:var(--good);}
+  .step.on{border-color:var(--bad);}
+  .rules{counter-reset:r;margin:14px 0;padding:0;list-style:none;}
+  .rules li{counter-increment:r;position:relative;padding-left:34px;margin:10px 0;}
+  .rules li::before{content:counter(r);position:absolute;left:0;top:1px;width:22px;height:22px;
+    border-radius:50%;background:var(--bg2);border:0.5px solid var(--bd);
+    display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--fg2);}
+  .rules li b{font-weight:500;}
+  .rescue{margin:14px 0;padding:0;list-style:none;}
+  .rescue li{background:var(--bg2);border-radius:8px;padding:10px 14px;margin:8px 0;position:relative;}
+  .rescue li .rk{font-weight:500;font-size:12.5px;color:var(--accent);}
+  footer{margin-top:44px;padding-top:16px;border-top:0.5px solid var(--bd);
+    color:var(--fg3);font-size:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>整板电流降到 1 mA 的方案</h1>
+  <p class="sub">目标：整板电流 → 1 mA，且永不出现「必须手动拉 BOOT0 走 ISP 才能救回来」的状态</p>
+  <p class="meta">车牌板（STM32F103C8T6 + 银尔达 YED_DTU4 + SC7A20H）· 依据四轮实测 + ST/TI/微盟数据手册 + 原理图解析 · 2026-10-12</p>
+
+  <div class="cards">
+    <div class="card"><div class="lbl">现状（4G 断电 + LED 全灭）</div><div class="num">21.96<span class="unit"> mA</span></div></div>
+    <div class="card"><div class="lbl">其中 MCU 的 Sleep@72MHz</div><div class="num">≈21<span class="unit"> mA（96%）</span></div></div>
+    <div class="card"><div class="lbl">改 Stop 后（静态待机）</div><div class="num">≈0.15<span class="unit"> mA</span></div></div>
+    <div class="card"><div class="lbl">平均 1 mA 所需上报周期</div><div class="num">≥27<span class="unit"> min</span></div></div>
+  </div>
+
+  <div class="callout bad">
+    <div class="t">一句话结论</div>
+    <b>这 22 mA 里 96% 是 STM32 自己在 72 MHz 的 Sleep 态</b>——不是 4G、不是 LED、不是传感器。
+    把 MCU 从 Sleep 改成 Stop，这一项就从 21 mA 掉到 0.014 mA。<br>
+    <b>但「1 mA」和「4G 常连 MQTT」在物理上互斥</b>：模组只要在网，最低就是 ~35 mA。要 1 mA，就必须周期上线。
+  </div>
+
+  <h2>1. 电流被谁吃了</h2>
+  <p>实测 4G 断电 + LED 全灭 = <b>21.96 mA</b>。与数据手册一对照，答案非常干净：</p>
+
+  <div class="chartbox">
+    <h3>现状 21.96 mA 的构成</h3>
+    <div class="cv" style="height:260px"><canvas id="c1"></canvas></div>
+    <p class="muted" style="font-size:12px;margin-bottom:0">
+      红条 = 数据手册对照得出的 MCU Sleep@72 MHz（typ 22 mA / max 35 mA，VDD 3.3 V / 25 °C）。
+      其余 ~1 mA 是传感器 + 分压 + LDO 静态，量级待拆分（四轮实测只能给出总和）。
+    </p>
+  </div>
+
+  <div class="callout warn">
+    <div class="t">修正一处旧结论</div>
+    <code>power-consumption-test.md</code> 里写「21.5 mA 的主体是外设时钟 / 传感器 / 板载电路」——不准确。
+    Sleep 模式下<b>内核时钟被门控，但 HSE + PLL + APB1/APB2 外设时钟 + Flash 全都在跑</b>，
+    22 mA 这个数字就是 F103 在 72 MHz 的 Sleep 典型值。<b>主体是 MCU，就是 MCU。</b>这决定了改造方向。
+  </div>
+
+  <h3>三种低功耗模式（数据手册值）</h3>
+  <div class="chartbox">
+    <div class="cv" style="height:300px"><canvas id="c2"></canvas></div>
+    <p class="muted" style="font-size:12px;margin-bottom:0">
+      对数轴。<b>选 Stop 不选 Standby</b>：只差 12 µA（对 1 mA 毫无意义），而 Stop 唤醒不用重新初始化全部外设、
+      RAM 保持，且还留了一条「能被探针看到」的路。Standby 掉调试口，反而更像变砖。
+    </p>
+  </div>
+
+  <h2>2. 目标待机预算（口径 A：不联网纯待机）</h2>
+  <table>
+    <thead><tr><th>项</th><th>目标值</th><th>怎么做到</th></tr></thead>
+    <tbody>
+      <tr><td>STM32 Stop + RTC(LSE)</td><td>0.016 mA</td><td>进 Stop，RTC 走 LSE</td></tr>
+      <tr><td>ME6206A33 静态 Iq</td><td>0.008 mA</td><td>器件本身够好（数据手册 8.0 µA typ），无需换</td></tr>
+      <tr><td>SC7A20H 加速度计</td><td>0.010 mA</td><td>休眠前写寄存器进低功耗/掉电模式</td></tr>
+      <tr><td>PA1 电池采样分压</td><td>0.030 mA</td><td>可选优化：上臂串 MOS 开关</td></tr>
+      <tr><td>引脚浮空 / 上下拉漏电</td><td>~0.020 mA</td><td>未用引脚全部配 <code>GPIO_MODE_ANALOG</code></td></tr>
+      <tr><td>4G / LED</td><td>0</td><td>断电 / 全灭</td></tr>
+      <tr class="hl"><td><b>VCC33 轨合计</b></td><td><b>≈0.08 ~ 0.15 mA</b></td><td>✅ 远低于 1 mA，有 5~10 倍余量</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">电池侧另计（探针测不到，要用真实电池 + µA 表；按 ver2 器件数据手册）：
+  <b>CN3142 夜间睡眠 &lt;0.003 mA</b>（输入掉电自动进睡眠，电池电流 &lt;3 µA）、
+  ME6206A33 <b>0.008 mA</b>、4G 断电漏电 ~0（PMOS 关断时栅=源，无电流）。电池自放电另算。</p>
+
+  <div class="callout good">
+    <div class="t">ver2 硬件更新（2026-10-12 确认）</div>
+    <b>光伏 → CN3142 充电 → VBAT → 单个 LDO(ME6206A33) → VCC33</b>；4G 直接挂 VBAT 经 PMOS(AO3401A) 开关；
+    <b>TPS63060 DC-DC 与 MCP73871 已不用</b>；<b>32.768 kHz 晶振已贴</b>（RTC 走 LSE）。<br>
+    → 夜间电源链路自身只剩 <b>CN3142 &lt;3 µA + LDO 8 µA ≈ 11 µA</b>，比旧方案更干净，
+    口径 A 的余量从 5~10 倍提高到 <b>~10 倍</b>。
+  </div>
+
+  <div class="callout good">
+    <div class="t">口径 A 结论</div>
+    <b>1 mA 不是问题，有 5~10 倍余量。</b>真正的约束是下面这个口径 B。
+  </div>
+
+  <h2>3. 口径 B：含周期上报的平均电流（真正的难点）</h2>
+  <p><code>I_avg = ( I_on × T_on + I_sleep × (T − T_on) ) / T</code>，取
+  <code>I_on ≈ 70 mA</code>（4G 注网 + 连接 + 上报 + MCU 72 MHz，实测 4G 在线档中位 64.16 mA）、
+  <code>T_on ≈ 20 s</code>、<code>I_sleep ≈ 0.15 mA</code>。</p>
+
+  <div class="chartbox">
+    <h3>上报周期 → 平均电流（红线 = 1 mA 目标）</h3>
+    <div class="cv" style="height:320px"><canvas id="c3"></canvas></div>
+    <p class="muted" style="font-size:12px;margin-bottom:0">
+      蓝线 = 单次上线窗口 20 s（现状注网耗时）；绿线 = 若能把窗口压到 10 s（会话保持 / PSM）。
+      <b>窗口减半，所需周期也减半</b>——两条杠杆是等比关系。
+    </p>
+  </div>
+
+  <table>
+    <thead><tr><th>上报周期 T</th><th>平均电流</th><th>2000 mAh 电池续航</th></tr></thead>
+    <tbody>
+      <tr><td>5 min</td><td>4.81 mA</td><td>~17 天</td></tr>
+      <tr><td>10 min</td><td>2.48 mA</td><td>~34 天</td></tr>
+      <tr><td>15 min</td><td>1.70 mA</td><td>~49 天</td></tr>
+      <tr><td>20 min</td><td>1.31 mA</td><td>~64 天</td></tr>
+      <tr class="hl"><td><b>27 min</b></td><td><b>1.00 mA</b></td><td><b>~83 天</b></td></tr>
+      <tr><td>30 min</td><td>0.93 mA</td><td>~90 天</td></tr>
+      <tr><td>60 min</td><td>0.54 mA</td><td>~155 天</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout bad">
+    <div class="t">必删的一条</div>
+    <code>HB_PERIOD_MS = 15000</code>（15 s 心跳）<b>必须删掉</b>。已实测：15 s 一次心跳 = 平均 +30 mA，
+    电池方案里这条会让续航从 90 天直接掉到 1 天。
+  </div>
+
+  <h2>4. 三层改造（按性价比排序）</h2>
+  <table>
+    <thead><tr><th>层</th><th>动作</th><th>电流</th><th>风险 / 代价</th></tr></thead>
+    <tbody>
+      <tr><td><b>L1</b> 时钟降频</td><td>72 MHz → 8 MHz（HSI，PLL 停）</td><td>22 → ~4 mA</td><td>零风险，改一行；CPU 变慢（本工程负载极轻）</td></tr>
+      <tr><td><b>L2</b> MCU 进 Stop</td><td>关外设 / 翻引脚 / 挂 SysTick / RTC 唤醒</td><td>4 → ~0.2 mA</td><td>唤醒后必须重建时钟；需 RTC 初始化</td></tr>
+      <tr><td><b>L3</b> 4G 占空比调度</td><td>周期上线 → 上报 → 断电，删心跳/探活</td><td>决定平均值</td><td>改动最大；<b>下行控制变"下个窗口生效"</b></td></tr>
+    </tbody>
+  </table>
+  <p><b>建议先只做 L1</b>——一次编译烧录就能看到 5 倍降幅，风险最低、收益最大的那一步。</p>
+
+  <h3>L3 的目标状态机</h3>
+  <div class="flow">
+    <div class="step stop"><div class="s1">Stop</div><div class="s2">0.15 mA</div></div>
+    <span class="arw">→</span>
+    <div class="step"><div class="s1">RTC 闹钟唤醒</div><div class="s2">7 µs</div></div>
+    <span class="arw">→</span>
+    <div class="step"><div class="s1">重建时钟</div><div class="s2">回 72 MHz</div></div>
+    <span class="arw">→</span>
+    <div class="step on"><div class="s1">4G 上电</div><div class="s2">V4G=1 · ~16 s 注网</div></div>
+    <span class="arw">→</span>
+    <div class="step on"><div class="s1">上报一包</div><div class="s2">+ 可选下行窗口</div></div>
+    <span class="arw">→</span>
+    <div class="step"><div class="s1">4G 断电</div><div class="s2">V4G=0</div></div>
+    <span class="arw">→</span>
+    <div class="step stop"><div class="s1">关外设 · 回 Stop</div><div class="s2">0.15 mA</div></div>
+  </div>
+  <p class="muted">绿色 = 低功耗段，红色 = 高功耗段。<b>整板平均电流 = 红色段面积 / 周期</b>，所以除了把周期拉长，
+  另一个等效杠杆就是把红色段压短。当前固件的 <code>{"cmd":"sleep"}</code> 语义是「MCU 睡、模组保持 MQTT」，
+  实测仍是 40 mA——<b>这条语义必须改</b>。</p>
+
+  <h2>5. 不变砖：五条铁律 + 三级救援</h2>
+  <p>核心就一句：<b>不动 SWD 引脚、不写选项字节</b>。做到这两条，无论固件怎么睡都能救回来。</p>
+
+  <h3>五条铁律（违反任何一条才真会砖）</h3>
+  <ol class="rules">
+    <li><b>绝不动 SWD 引脚</b>：不修改 <code>AFIO_MAPR</code> 的 <code>SWJ_CFG</code>，不把 <b>PA13/PA14</b> 配成 GPIO。
+      ——这是<b>唯一</b>会让你「必须拉 BOOT0」的操作。</li>
+    <li><b>绝不写选项字节</b>：不开读保护 RDP，尤其 <b>RDP Level 2 = 永久锁死，任何手段都救不回来</b>。</li>
+    <li><b>上电留开机窗口</b>：复位后先跑 <b>1~2 s @8 MHz</b> 再进 Stop，保证任何时刻重新上电 / 上电瞬间接探针都能抓到。</li>
+    <li><b>保留唤醒窗口</b>：每次唤醒都有一段 Run 期（~20 s 级），这段里 SWD 必然可用。</li>
+    <li><b>若加 IWDG</b>：F1 的 IWDG 在 Stop 下继续计数，必须设计成「复位后判断唤醒原因再决定睡不睡」，
+      否则会陷入复位—睡眠死循环——这是「看起来像砖」的经典陷阱。</li>
+  </ol>
+
+  <h3>三级救援</h3>
+  <ul class="rescue">
+    <li><span class="rk">① SWD 直连</span><br>直接 attach。开机窗口 1~2 s、每次唤醒的 ~20 s 窗口里都能连。</li>
+    <li><span class="rk">② 复位下连接（connect-under-reset）</span><br>
+      按住板上复位键 <b>SW4</b> 不放 → 探针 attach → 松开 → 立刻擦除/烧录。<br>
+      <span class="muted">注：本板 SWD 排针 H2 只有 4 pin（VCC33/SWDIO/SWCLK/GND），<b>没有 NRST</b>，只能手按 SW4 配合。</span></li>
+    <li><span class="rk">③ BOOT0 走串口 ISP</span><br>
+      拉高 BOOT0 + 复位 → 系统 bootloader。<br>
+      <span class="muted">⚠️ 本板 USART1（PA9/PA10）正好接的是 4G 模组，会抢线——必须先给 4G 断电（V4G=0）再下载。
+      所以这条路在这块板上「能走但别扭」。</span></li>
+  </ul>
+
+  <div class="callout warn">
+    <div class="t">关于 <code>DBG_STOP</code>：<b>生产固件不要开</b></div>
+    RM0008 说 <code>DBGMCU_CR</code>（0xE0042004）调试器不支持时软件也能写；<b>但</b> F103xC/D/E 勘误 2.2.2 明确写着
+    <code>DBGMCU_CR</code> <b>只在调试模式下可访问，用户模式读回 0x00</b>——C8 是否同样受限需实测。
+    即便能写，<code>DBG_STOP=1</code> 的语义是「Stop 下用内部 RC 继续给 FCLK/HCLK 供时钟」，
+    <b>Stop 电流会从 14 µA 显著抬高</b>，与省电目标冲突。<br>
+    <b>所以救砖能力不靠它</b>，靠上面三级救援；而 ①② 的可靠性完全由铁律 1、2 保证。
+    因为 ③ 在这块板上别扭，<b>只要不碰 PA13/PA14、不写选项字节，这块板在软件上就不可能被砖掉。</b>
+  </div>
+
+  <h2>6. 分期实施（每步可回滚）</h2>
+  <table>
+    <thead><tr><th>阶段</th><th>动作</th><th>预期电流</th><th>回滚</th></tr></thead>
+    <tbody>
+      <tr><td><b>S0</b></td><td>只改时钟：72 MHz → 8 MHz</td><td>22 → ~4 mA</td><td>改回一行</td></tr>
+      <tr><td><b>S1</b></td><td>实测确认（口径 A 是否达标、LSE 是否起振）</td><td>—</td><td>—</td></tr>
+      <tr><td><b>S2</b></td><td>加 Stop + 开机窗口（先不加 RTC，用手动/串口唤醒验证进出流程）</td><td>~4 → ~0.2 mA</td><td>还原 <code>while(1)</code></td></tr>
+      <tr><td><b>S3</b></td><td>加 RTC/LSE 周期唤醒（仍保持 4G 常连，验证唤醒链路）</td><td>平均 ~35 mA（模组仍在线）</td><td>关 RTC</td></tr>
+      <tr><td><b>S4</b></td><td>改调度：唤醒才给 4G 上电，上报完断电；删心跳/探活</td><td><b>平均 → 目标值</b></td><td>恢复常连</td></tr>
+    </tbody>
+  </table>
+
+  <h2>7. 待确认 / 待实测</h2>
+  <ul>
+    <li><b>口径</b>：目标是 A（静态待机）还是 B（含周期上报的平均）？若是 B，<b>上报周期要求是多少</b>？</li>
+    <li><b>业务代价</b>：能否接受「下行控制从实时变成下个上报窗口生效」？不能接受则 1 mA 无解。</li>
+    <li><s><b>LSE 晶振是否贴件</b></s> → <b>✅ 已确认贴件</b>（ver2），RTC 走 LSE。</li>
+    <li><b>PA1 电池采样分压</b>实际接法（ver2 位号可能已变）→ 常态漏电多少。</li>
+    <li><s><b>电池侧静态</b>（TPS63060 / MCP73871）</s> → <b>✅ ver2 已不用</b>，换成 CN3142
+      （夜间睡眠电池电流 <b>&lt;3 µA</b>，数据手册）。仍建议用真实电池 + µA 表实测一次夜间待机。</li>
+    <li><b>VCC33 那颗 LDO 的位号/型号</b>（按「只用一个 LDO」暂按 ME6206A33 记，Iq 8 µA）。</li>
+    <li><b>两套 4G 固件是否支持 PSM/eDRX</b>（能显著压缩上线窗口 T_on）。</li>
+  </ul>
+
+  <footer>
+    依据：<code>docs/power-consumption-test.md</code>（四轮实测）· <b>车牌ver2.eprj2</b>（09-23 改版后最新图，光伏+CN3142+单 LDO）·
+    STM32F103 数据手册（DS5319 表 13/16）· RM0008 §31.16-31.17 · F103xC/D/E 勘误 2.2.2 ·
+    ME6206 数据手册（Iq 8.0 µA typ）· CN3142 数据手册（如韵，Iq 3 µA / 夜间睡眠电池电流 &lt;3 µA）。
+    详细代码骨架与实施细节见 <code>docs/low-power-1mA-plan.md</code>。
+  </footer>
+</div>
+
+<script>
+(function(){
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var cs = getComputedStyle(document.documentElement);
+  var FG = cs.getPropertyValue('--fg').trim() || '#1f1f1e';
+  var FG2 = cs.getPropertyValue('--fg2').trim() || '#5f5e5a';
+  var GRID = dark ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.08)';
+  var C = { blue:'#378ADD', lblue:'#85B7EB', teal:'#1D9E75', green:'#0F8A5F',
+            red:'#C0392B', orange:'#D97706', grey:'#888780', purple:'#7F77DD' };
+  if (dark){ C.blue='#85B7EB'; C.teal='#5DCAA5'; C.green='#5DCAA5'; C.red='#EB7A6E'; C.orange='#E8A87C'; }
+
+  Chart.defaults.color = FG2;
+  Chart.defaults.font.family = '-apple-system,"Segoe UI","Microsoft YaHei",sans-serif';
+  Chart.defaults.font.size = 11.5;
+
+  function base(){ return { responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{ labels:{ color:FG2, boxWidth:10, boxHeight:10, usePointStyle:true, pointStyle:'rectRounded' } } } }; }
+
+  /* ---- 图 1：现状构成（横向条） ---- */
+  var c1 = base();
+  c1.indexAxis = 'y';
+  c1.scales = { x:{ beginAtZero:true, grid:{color:GRID}, title:{display:true,text:'mA',color:FG2} },
+                y:{ grid:{display:false} } };
+  new Chart(document.getElementById('c1'), {
+    type:'bar',
+    data:{ labels:['MCU Sleep @72MHz','传感器 + 分压 + LDO + 杂项'],
+      datasets:[{ data:[21.0, 0.96], backgroundColor:[C.red, C.grey],
+        borderRadius:5, barThickness:34 }] },
+    options: c1
+  });
+
+  /* ---- 图 2：低功耗模式对比（对数轴） ---- */
+  var c2 = base();
+  c2.scales = { y:{ type:'logarithmic', min:0.001, max:100, grid:{color:GRID},
+      title:{display:true, text:'mA（对数轴）', color:FG2},
+      ticks:{ callback:function(v){ return v>=1? v+' mA' : v*1000+' µA'; } } },
+    x:{ grid:{display:false} } };
+  c2.plugins.tooltip = { callbacks:{ label:function(ctx){
+      var v=ctx.parsed.y; return v>=1? v.toFixed(2)+' mA' : (v*1000).toFixed(1)+' µA'; } } };
+  new Chart(document.getElementById('c2'), {
+    type:'bar',
+    data:{ labels:['Run 72MHz','Sleep 72MHz\n（现状）','Run 8MHz','Sleep 8MHz','Stop','Standby'],
+      datasets:[{ label:'电流（typ, 3.3V/25°C）', data:[36,22,10,3.5,0.014,0.002],
+        backgroundColor:[C.grey, C.red, C.grey, C.grey, C.green, C.blue],
+        borderRadius:5, barThickness:44 }] },
+    options: c2
+  });
+
+  /* ---- 图 3：上报周期 → 平均电流 ---- */
+  var labels=[], a20=[], a10=[];
+  for (var T=1; T<=60; T++){
+    var s=T*60;
+    a20.push( (70*20 + 0.15*(s-20))/s );
+    a10.push( (70*10 + 0.15*(s-10))/s );
+    labels.push(T);
+  }
+  var c3 = base();
+  c3.scales = { y:{ beginAtZero:true, max:6, grid:{color:GRID},
+      title:{display:true,text:'平均电流 (mA)',color:FG2} },
+    x:{ grid:{display:false}, title:{display:true,text:'上报周期 T (min)',color:FG2},
+      ticks:{ callback:function(v,i){ return labels[i]%5===0? labels[i] : ''; } } } };
+  c3.plugins.legend = { labels:{ color:FG2, usePointStyle:true, pointStyle:'line' } };
+  new Chart(document.getElementById('c3'), {
+    type:'line',
+    data:{ labels:labels, datasets:[
+      { label:'单次上线窗口 20 s', data:a20, borderColor:C.blue, backgroundColor:C.blue,
+        borderWidth:2, pointRadius:0, tension:.15 },
+      { label:'上线窗口压缩到 10 s', data:a10, borderColor:C.green, backgroundColor:C.green,
+        borderWidth:2, borderDash:[5,4], pointRadius:0, tension:.15 },
+      { label:'1 mA 目标线', data:labels.map(function(){return 1;}),
+        borderColor:C.red, borderWidth:1.5, borderDash:[3,3], pointRadius:0, fill:false }
+    ] },
+    options: c3
+  });
+})();
+</script>
+</body>
+</html>

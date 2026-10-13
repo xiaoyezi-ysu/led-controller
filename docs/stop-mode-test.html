@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stop 模式判决实验 — 车牌板整板电流</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --line:#e5e7eb; --ink:#1f2328; --mut:#6b7280;
+    --red:#d9534f; --blue:#2563eb; --green:#16a34a; --amber:#f59e0b; --purple:#7c3aed; --cyan:#0891b2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:32px 22px 64px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .sub{color:var(--mut);font-size:13.5px;margin-bottom:26px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:6px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi .lab{font-size:12.5px;color:var(--mut);margin-bottom:6px}
+  .kpi .val{font-size:25px;font-weight:700;letter-spacing:-.4px}
+  .kpi .val small{font-size:13px;font-weight:500;color:var(--mut);margin-left:3px}
+  .kpi.good .val{color:var(--green)}
+  .kpi.warn .val{color:var(--amber)}
+  .kpi.bad .val{color:var(--red)}
+  .chartbox{position:relative;height:330px}
+  .chartbox.tall{height:380px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left}
+  th{background:#fafbfc;font-weight:600;color:#374151;font-size:13px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}
+  .tag.ok{background:#e8f6ee;color:#15803d}
+  .tag.no{background:#fdeceb;color:#b91c1c}
+  .tag.q{background:#fff5e6;color:#b45309}
+  .hl{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .hl b{color:#b45309}
+  code{background:#f3f4f6;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:13px}
+  .note{color:var(--mut);font-size:13px}
+  ul{margin:8px 0 0;padding-left:22px}
+  li{margin:5px 0}
+  .flow{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;font-size:13px;
+        font-family:ui-monospace,Consolas,monospace;overflow-x:auto;white-space:pre}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Stop 模式判决实验 · 车牌板整板电流</h1>
+  <div class="sub">
+    2026-10-12 · STM32F103C8T6（8&nbsp;MHz 固件）· 4G 断电 + LED 全灭 · 探针 VCC ≈ 3.38&nbsp;V<br>
+    手段：SWD 写 <code>SCB_SCR.SLEEPDEEP</code> → 主循环 <code>__WFI()</code> 进 Stop，实测已执行
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="lab">基线（8 MHz / Sleep）</div><div class="val">10.25<small>mA</small></div></div>
+    <div class="kpi"><div class="lab">Stop + DBG_STOP=1</div><div class="val">9.73<small>mA</small></div></div>
+    <div class="kpi bad"><div class="lab">Stop 真值（无 DBG_STOP）</div><div class="val">8.20<small>mA</small></div></div>
+    <div class="kpi good"><div class="lab">MCU 实际贡献（差值）</div><div class="val">2.06<small>mA</small></div></div>
+  </div>
+
+  <h2>一、进 Stop 前后</h2>
+  <div class="card">
+    <div class="chartbox"><canvas id="c1"></canvas></div>
+    <p class="note">
+      把 MCU 从 Sleep 彻底推进 Stop（HCLK 停振），整板只从 10.25 掉到 8.20 mA —— <b>只省 2.06 mA</b>。
+      ※ DBG_STOP=1 那一档是"生命线"状态（调试逻辑仍被内部 RC 供时钟），它自己就吃掉约 1.53 mA。
+    </p>
+  </div>
+
+  <h2>二、"内核真的停了"的硬证据</h2>
+  <div class="card">
+    <table>
+      <tr><th>观测量</th><th>Sleep（进 Stop 前）</th><th>Stop（进 Stop 后）</th><th>说明</th></tr>
+      <tr><td><code>uwTick</code> 增量</td><td class="num">2900+ ms / 1.5 s</td><td class="num"><b>0 ms / 1.5 s</b></td>
+          <td>SysTick 靠 HCLK 供时钟；它停了 ⇒ HCLK 真断了</td></tr>
+      <tr><td><code>SCB_SCR</code> 回读</td><td class="num">0x00000000</td><td class="num">0x00000004</td><td>SLEEPDEEP 确实置上了</td></tr>
+      <tr><td>电流</td><td class="num">10.25 mA</td><td class="num">8.20 mA</td><td>—</td></tr>
+    </table>
+    <p class="note">
+      ⚠️ Stop 下读外设寄存器（如 <code>GPIOA_ODR</code>）会读回 0，因为 APB 时钟已关 —— 那是<b>读数假象</b>，
+      引脚输出电平实际是保持的。核心区寄存器（SCB_SCR / DBGMCU_CR）仍可正常读写。
+    </p>
+  </div>
+
+  <h2>三、电流分解（自洽）</h2>
+  <div class="card">
+    <div class="chartbox tall"><canvas id="c2"></canvas></div>
+    <p class="note">
+      三个主频点联立：<b>固定负载 ≈ 8.20 mA</b>，MCU 部分随频率变 —— 72&nbsp;MHz 约 14.28 mA、8&nbsp;MHz 约 2.05 mA、Stop ≈ 0。
+      频差 12.2 mA 与独立实测的 12.23 mA 完全对上。
+    </p>
+  </div>
+
+  <h2>四、那 8.20 mA 对不上账 ⚠️</h2>
+  <div class="card">
+    <div class="chartbox"><canvas id="c3"></canvas></div>
+    <p class="note">
+      按 ver2 网表逐项记账（MCU 已停 = 0）：能持续吃电的只有 LEDB2 常亮蓝灯（R24 <b>510 Ω</b>，Vf 2.9 V ≈ 1.4 mA）
+      与零星上拉（≈0.3 mA），其余全是 µA 级。<b>合计 ≈ 1.8 mA，仍有 ≈ 6.4 mA 无着落。</b>
+    </p>
+    <div class="hl">
+      <b>两个待判假设：</b>
+      ① 探针 <code>power-read</code> 存在固定偏置；
+      ② 板上器件漏电（U4 LDO / U8 CN3142 / U6 DW03）。
+      <div class="note" style="margin-top:8px">
+        旁证：用 MCU 的 <code>VREFINT</code>(1.20 V) 反推得 <b>VCC33 ≈ 3.18 V、VBAT ≈ 3.185 V</b>（两者相等 → LDO 处于 dropout），
+        而探针自报 VCC = <b>3.38 V</b>，相差 0.1~0.2 V → 探针 ADC 可能有系统偏差。
+      </div>
+    </div>
+  </div>
+
+  <h2>五、下一步：一个 15 秒的手工测试就能定案</h2>
+  <div class="card">
+    <p style="margin-top:0"><b>把探针的 VCC 夹子从板上取下</b>（GND / SWD 保留），读一次 <code>mklink power-read</code>：</p>
+    <table>
+      <tr><th>读数</th><th>结论</th><th>之后怎么办</th></tr>
+      <tr>
+        <td class="num"><b>仍 ≈ 8 mA</b></td>
+        <td><span class="tag no">探针偏置</span></td>
+        <td>此前所有绝对电流值需重新标定（<i>增量</i>值仍有效）；1 mA 目标起点比想象低得多</td>
+      </tr>
+      <tr>
+        <td class="num"><b>≈ 0 mA</b></td>
+        <td><span class="tag q">板载漏电</span></td>
+        <td>按网表逐个拆：先撬 <b>R24</b>（应掉 ≈1.4 mA 验证记账）→ 断 LDO 输出 / 换 <b>U4</b> → 查 <b>U8 (CN3142)</b></td>
+      </tr>
+    </table>
+  </div>
+
+  <h2>六、恢复通道（三条，全部实测）</h2>
+  <div class="card">
+    <table>
+      <tr><th>通道</th><th>适用</th><th>实测结果</th></tr>
+      <tr><td><code>mklink reset</code></td><td>SWD 存活时（DBG_STOP=1）</td><td><span class="tag ok">✅ uwTick 归零</span></td></tr>
+      <tr><td>继电器 power-cycle（COM12，单路）</td><td>任何情况</td>
+          <td><span class="tag ok">✅ RCC_CSR = 0x0C000000，PORRSTF=1（确证掉电复位）</span></td></tr>
+      <tr><td>手按 SW4（NRST）</td><td>最后兜底</td><td class="note">未使用（板子已由继电器正确复位）</td></tr>
+    </table>
+    <div class="flow">继电器 OFF 期间：探针从 USB 消失（"Probe selector is missing"）
+                   → 继电器切的是下载器 USB 供电
+                   → 板子由探针 VCC 供电（VBAT = 探针 VCC = 3.38 V），因此一起掉电重启</div>
+  </div>
+
+  <h2>七、对「整板 1 mA」目标的影响</h2>
+  <div class="card">
+    <ul>
+      <li><b>L2（MCU 进 Stop）本身只值 2 mA</b> —— 单靠它永远到不了 1 mA。</li>
+      <li>必须先解决这 <b>8.20 mA 的固定负载</b>：
+        若是探针偏置，实际起点远低于 10 mA，1 mA 反而更容易；
+        若是板载漏电，则属于硬件问题，必须先把漏电修掉。</li>
+      <li>L1（72→8 MHz）已实测省 11.8 mA，是<b>目前唯一确定有效</b>的一步，且零风险可回滚。</li>
+    </ul>
+  </div>
+
+  <p class="note" style="margin-top:28px">
+    依据：<code>docs/low-power-1mA-plan.md</code> §11 · <code>docs/ver2-netlist.md</code> ·
+    实测脚本 <code>tmp/stop_exp.py</code>、<code>tmp/topo_check.py</code>
+  </p>
+</div>
+
+<script>
+const FONT = {family:'-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif', size:12.5};
+Chart.defaults.font.family = FONT.family;
+Chart.defaults.color = '#4b5563';
+
+new Chart(document.getElementById('c1'), {
+  type:'bar',
+  data:{
+    labels:['基线<br>8MHz/Sleep','Stop + DBG_STOP=1','Stop 真值<br>(无 DBG_STOP)'],
+    datasets:[{
+      label:'整板电流 (mA)',
+      data:[10.25, 9.73, 8.20],
+      backgroundColor:['#93c5fd','#fcd34d','#f87171'],
+      borderColor:['#2563eb','#d97706','#b91c1c'], borderWidth:1.5, borderRadius:6, maxBarThickness:90
+    }]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{
+      legend:{display:false},
+      title:{display:true,text:'进 Stop 只从 10.25 → 8.20 mA（−2.06 mA）',font:{size:14,weight:'600'},color:'#1f2328'},
+      tooltip:{callbacks:{label:c=>' '+c.parsed.y.toFixed(2)+' mA'}}
+    },
+    scales:{
+      y:{beginAtZero:true, suggestedMax:12, title:{display:true,text:'mA'},grid:{color:'#eef0f3'}},
+      x:{grid:{display:false}}
+    }
+  }
+});
+
+new Chart(document.getElementById('c2'), {
+  type:'bar',
+  data:{
+    labels:['72 MHz','8 MHz','Stop'],
+    datasets:[
+      {label:'固定负载（与 MCU 无关）', data:[8.20,8.20,8.20], backgroundColor:'#cbd5e1',
+       borderColor:'#94a3b8', borderWidth:1, borderRadius:4, stack:'s'},
+      {label:'MCU 贡献（随主频变）', data:[14.28,2.05,0.01], backgroundColor:'#3b82f6',
+       borderColor:'#1d4ed8', borderWidth:1, borderRadius:4, stack:'s'}
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{
+      legend:{position:'bottom'},
+      title:{display:true,text:'整板电流 = 固定负载 8.20 mA + MCU（堆叠）',font:{size:14,weight:'600'},color:'#1f2328'},
+      tooltip:{callbacks:{label:c=>' '+c.dataset.label+': '+c.parsed.y.toFixed(2)+' mA'}}
+    },
+    scales:{
+      y:{beginAtZero:true, stacked:true, suggestedMax:24, title:{display:true,text:'mA'},grid:{color:'#eef0f3'}},
+      x:{stacked:true, grid:{display:false}}
+    }
+  }
+});
+
+new Chart(document.getElementById('c3'), {
+  type:'bar',
+  data:{
+    labels:['LEDB2 常亮蓝灯','上拉电阻','LDO/传感器等','未解释余量'],
+    datasets:[{
+      label:'Stop 下 8.20 mA 的账 (mA)',
+      data:[1.40, 0.30, 0.10, 6.40],
+      backgroundColor:['#60a5fa','#a5b4fc','#c4b5fd','#ef4444'],
+      borderColor:['#2563eb','#6366f1','#8b5cf6','#b91c1c'], borderWidth:1.5, borderRadius:6
+    }]
+  },
+  options:{
+    indexAxis:'y',
+    responsive:true, maintainAspectRatio:false,
+    plugins:{
+      legend:{display:false},
+      title:{display:true,text:'网表能解释的只有 1.8 mA，约 6.4 mA 找不到出处',font:{size:14,weight:'600'},color:'#1f2328'},
+      tooltip:{callbacks:{label:c=>' '+c.parsed.x.toFixed(2)+' mA'}}
+    },
+    scales:{
+      x:{beginAtZero:true, title:{display:true,text:'mA'},grid:{color:'#eef0f3'}},
+      y:{grid:{display:false}}
+    }
+  }
+});
+</script>
+</body>
+</html>

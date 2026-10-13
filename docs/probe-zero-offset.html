@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>探针零点偏置 · 破解「8 mA 神秘负载」</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --line:#e5e7eb; --ink:#1f2328; --mut:#6b7280;
+    --red:#d9534f; --blue:#2563eb; --green:#16a34a; --amber:#f59e0b; --purple:#7c3aed; --cyan:#0891b2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:32px 22px 64px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .sub{color:var(--mut);font-size:13.5px;margin-bottom:26px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:6px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi .lab{font-size:12.5px;color:var(--mut);margin-bottom:6px}
+  .kpi .val{font-size:25px;font-weight:700;letter-spacing:-.4px}
+  .kpi .val small{font-size:13px;font-weight:500;color:var(--mut);margin-left:3px}
+  .kpi.good .val{color:var(--green)}
+  .kpi.warn .val{color:var(--amber)}
+  .kpi.bad .val{color:var(--red)}
+  .kpi.blue .val{color:var(--blue)}
+  .chartbox{position:relative;height:320px}
+  .chartbox.tall{height:370px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left}
+  th{background:#fafbfc;font-weight:600;color:#374151;font-size:13px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}
+  .tag.ok{background:#e8f6ee;color:#15803d}
+  .tag.no{background:#fdeceb;color:#b91c1c}
+  .tag.q{background:#fff5e6;color:#b45309}
+  .hl{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .hl b{color:#b45309}
+  .ok{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .ok b{color:#15803d}
+  code{background:#f3f4f6;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:13px}
+  .note{color:var(--mut);font-size:13px}
+  ul{margin:8px 0 0;padding-left:22px}
+  li{margin:5px 0}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;font-size:12.5px;
+      font-family:ui-monospace,Consolas,monospace;overflow-x:auto;margin:10px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>探针零点偏置 · 破解「8 mA 神秘负载」</h1>
+  <div class="sub">
+    2026-10-12 深夜 · MKLink 探针 V4.6.8（SN E0CB34CC85A4CDCD）· 目标断开状态实测<br>
+    方法：<code>mklink device-status</code> 确认 <code>idcode=0x0</code> / 无目标，同时读 <code>power-read</code>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi warn"><div class="lab">空载零点（n=20 中位）</div><div class="val">5.70<small>mA</small></div></div>
+    <div class="kpi good"><div class="lab">Stop 真实整板电流</div><div class="val">≈2.2<small>mA</small></div></div>
+    <div class="kpi blue"><div class="lab">8 MHz Sleep 真实</div><div class="val">≈4.25<small>mA</small></div></div>
+    <div class="kpi good"><div class="lab">4G 自洽性误差</div><div class="val">0.1<small>mA</small></div></div>
+  </div>
+
+  <h2>1. 证据：目标断开，读数却不是 0</h2>
+  <div class="card">
+    <p style="margin-top:0">
+      探针从板子上断开后，SWD 侧确认无目标：<code>"mcu": ""</code>、<code>"idcode": "0x0"</code>，
+      <code>read-reg</code> 一律报 <i>target debug access may be disabled or unavailable</i>。
+      但 <code>power-read</code> 连续 20 次给出下面这组数——<b>一个都不是 0</b>。
+    </p>
+    <div class="chartbox"><canvas id="zeroChart"></canvas></div>
+    <p class="note" style="margin-bottom:0">
+      20 次采样：中位 <b>5.70 mA</b>、均值 5.69 mA、范围 5.33~6.01 mA。
+      另一次相隔数分钟的 15 次采样中位为 <b>6.85 mA</b>（范围 6.11~8.10）——零点本身会漂移。
+    </p>
+  </div>
+
+  <h2>2. 扣除零点后，所有历史数据自洽</h2>
+  <div class="card">
+    <div class="chartbox tall"><canvas id="compareChart"></canvas></div>
+    <p class="note" style="margin-bottom:0">零点取 6.0 mA。浅色为实测读数（含零点），深色为扣除零点后的板子真实电流。</p>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead><tr><th>状态（4G 断电 + LED 全灭）</th><th class="num">实测读数</th><th class="num">扣除零点</th><th>独立佐证</th></tr></thead>
+      <tbody>
+        <tr><td>72 MHz / Sleep</td><td class="num">22.48</td><td class="num">16.5</td><td>F103 Run@72MHz 数据手册 typ 36 mA，同量级</td></tr>
+        <tr><td>8 MHz / Sleep</td><td class="num">10.25</td><td class="num">4.25</td><td>Sleep@8MHz 数 mA 量级</td></tr>
+        <tr><td><b>8 MHz / Stop</b></td><td class="num">8.20</td><td class="num"><b>≈2.2</b></td><td>Stop 14 µA + LEDB2 ~0.8 + 上拉 ~0.3 + 杂项 ≈ 1.1~1.8 mA</td></tr>
+        <tr><td>8 MHz / 4G ON</td><td class="num">52.52</td><td class="num">46.5</td><td>板子 4.25 + 模组自身 42.16 = <b>46.4</b> ✅</td></tr>
+      </tbody>
+    </table>
+    <div class="ok">
+      <b>决定性佐证（最后一行）：</b>4G 上电整板 = 板子本底 4.25 + 模组 42.16 + 零点 6.0 = <b>52.41 mA</b>，
+      与实测 <b>52.52 mA</b> 只差 <b>0.11 mA</b>。若不引入零点，三项相加只有 46.4 mA，
+      与实测差 6.1 mA，<b>无法解释</b>。
+    </div>
+  </div>
+
+  <h2>3. 作废的旧结论 &amp; 仍然成立的结论</h2>
+  <div class="card">
+    <p style="margin-top:0"><span class="tag no">作废</span></p>
+    <ul>
+      <li>“整板另有 <b>8.20 mA 与 MCU 无关的神秘固定负载</b>” —— 那 8.20 里 <b>≈6 mA 是探针零点</b>，其余 ≈2.2 mA 由 LEDB2 + 上拉即可解释。</li>
+      <li>“VCC33 上有约 <b>6.4 mA 无法解释</b>的负载” —— 不存在。</li>
+    </ul>
+    <p><span class="tag ok">仍然成立</span>（全部是<b>差值</b>，不受零点影响）</p>
+    <ul>
+      <li>L1（72→8 MHz）省 <b>11.8 mA（−52%）</b></li>
+      <li>L2（Sleep→Stop）省 <b>2.06 mA</b></li>
+      <li>4G 模组自身 <b>42.16 mA</b>，与主频无关</li>
+      <li>LED 净增：红 +7.33 / 黄 +7.39 / 绿 +19.18 / RGB +33.59（8 MHz 与 72 MHz 一致）</li>
+    </ul>
+  </div>
+
+  <h2>4. 对「整板 → 1 mA」目标的影响：这是好消息</h2>
+  <div class="card">
+    <p style="margin-top:0">扣除零点后 Stop 时板子真实电流 ≈ <b>2.2 mA</b>（而非以为的 8.2 mA），构成如下：</p>
+    <table>
+      <thead><tr><th>项</th><th class="num">电流</th></tr></thead>
+      <tbody>
+        <tr><td><b>LEDB2 蓝灯常亮</b>（R24 510 Ω，永久跨 VCC33，固件关不掉）</td><td class="num">~0.5~1.2 mA</td></tr>
+        <tr><td>I2C / SWD / NRST 上拉（R5/R6/R18/R21）</td><td class="num">~0.3 mA</td></tr>
+        <tr><td>MCU Stop</td><td class="num">0.014 mA</td></tr>
+        <tr><td>LDO 自身 Iq / 传感器 / 分压 / VBAT 侧</td><td class="num">&lt; 0.03 mA</td></tr>
+        <tr><td><b>合计</b></td><td class="num"><b>≈1.0~1.6 mA</b></td></tr>
+      </tbody>
+    </table>
+    <div class="ok">
+      <b>⇒ <code>L2（进 Stop）</code> + <code>去掉 LEDB2 常亮</code> 就能落到 1 mA 量级。</b>
+      之前认为必需的 <code>L3（4G 占空比调度）</code>可以不做——除非要把「含周期上报的长期平均」也算进 1 mA。
+    </div>
+  </div>
+
+  <h2>5. 顺带回答：传感器（SC7A20H）怎么关</h2>
+  <div class="card">
+    <p style="margin-top:0">
+      先给结论：<b>它不是那 6 mA 的元凶</b>。SC7A20H 数据手册在 <b>100 Hz / 正常模式</b>下约 <b>45 µA</b>，
+      低功耗模式下每轴仅几 µA，与 mA 级差两个数量级。而且 U1 由 VCC33 直接常供电（pin 3/7/11），
+      板上<b>没有给它断电的开关管</b>，所以只能靠 I2C 配置寄存器关。
+    </p>
+    <p>当前固件配置（<code>Core/Src/sc7a20h.c</code> 的 <code>SL_SC7A20H_INIT_REG1</code> 表）：</p>
+    <pre>0x20, 0x47, 0x00,   /* CTRL_REG1 = 0x47 → ODR 100Hz · 正常模式 · XYZ 全开 */</pre>
+
+    <table>
+      <thead><tr><th>关法</th><th>改法</th><th>传感器电流</th><th>保留功能</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>A. 进 power-down（最彻底）</b></td>
+          <td><code>0x20,0x00,0x00</code></td>
+          <td>≈0.5 µA</td>
+          <td>无（不再出姿态）</td>
+        </tr>
+        <tr>
+          <td>B. 降到 1 Hz</td>
+          <td><code>0x20,0x17,0x00</code></td>
+          <td>≈2 µA</td>
+          <td>有（1 次/秒）</td>
+        </tr>
+        <tr>
+          <td>C. 100 Hz + 低功耗位</td>
+          <td><code>0x20,0x4F,0x00</code></td>
+          <td>≈11 µA</td>
+          <td>有（100 Hz，精度降）</td>
+        </tr>
+        <tr>
+          <td><b>D. 干脆不初始化（最省 + 省 MCU 时间）</b></td>
+          <td>注释掉 <code>main.c</code> 里 <code>g_sc7_id = SC7A20H_Driver_Init(...)</code>，或 <code>g_sc7_id = 0;</code></td>
+          <td>≈0.5 µA（出厂默认即 power-down）</td>
+          <td>无；主循环也不再每 500 ms 做一次软 I2C 读</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="hl">
+      <b>三种「关」法的预期收益都在 < 0.05 mA。</b>相对 Stop 时的 2.2 mA 本底，
+      传感器只占 <b>0.1%</b>。真要省电，优先级是：<b>① 去掉 LEDB2 常亮（~0.8 mA）→ ② 上拉电阻（0.3 mA）→ ③ 传感器（0.01 mA）</b>。
+    </div>
+  </div>
+
+  <h2>6. 今后测量规范（必须遵守）</h2>
+  <div class="card">
+    <ol style="margin:0;padding-left:22px">
+      <li>每次功耗对比实验前，<b>先测零点</b>：探针与板子断开（VCC 悬空），连读 20 次 <code>power-read</code> 取<b>中位</b>。</li>
+      <li><b>绝对电流 = 读数 − 零点</b>；<b>增量（Δ）不需要修正</b>，可直接用。</li>
+      <li>零点会漂移（本次观测 5.3~8.1 mA）→ 同一组对比实验要在<b>同一时段连续完成</b>。</li>
+      <li>想拿到可信绝对值，做一次<b>已知负载标定</b>：VCC–GND 接 1 kΩ（→3.38 mA），看增量是否等于 I=V/R，
+          以判断偏置是「加法」还是「比例」。</li>
+    </ol>
+  </div>
+
+  <p class="note" style="text-align:center;margin-top:34px">
+    依据：本机实测（2026-10-12）· <code>docs/low-power-1mA-plan.md</code> §12 · <code>docs/stop-mode-test.html</code> · <code>docs/ver2-netlist.md</code>
+  </p>
+
+</div>
+
+<script>
+const ink = '#1f2328', mut = '#6b7280', line = '#e5e7eb';
+
+// 1) 零点采样序列
+const zeroSamples = [5.69,5.363,6.009,5.883,5.56,5.647,5.712,5.851,5.698,5.912,
+                     5.729,5.725,5.769,5.694,5.576,5.688,5.419,5.326,5.885,5.686];
+new Chart(document.getElementById('zeroChart'), {
+  type: 'line',
+  data: {
+    labels: zeroSamples.map((_,i)=>'#'+(i+1)),
+    datasets: [
+      {
+        label: '空载读数 (mA)',
+        data: zeroSamples,
+        borderColor: '#d9534f',
+        backgroundColor: 'rgba(217,83,79,.12)',
+        borderWidth: 2, pointRadius: 2.5, tension: .28, fill: true
+      },
+      {
+        label: '零点中位 5.70 mA',
+        data: zeroSamples.map(()=>5.70),
+        borderColor: '#2563eb', borderWidth: 1.6, borderDash: [6,4],
+        pointRadius: 0, fill: false
+      },
+      {
+        label: '零线 0 mA',
+        data: zeroSamples.map(()=>0),
+        borderColor: '#9ca3af', borderWidth: 1, borderDash: [2,4],
+        pointRadius: 0, fill: false
+      }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: ink, boxWidth: 14, font:{size:12} } } },
+    scales: {
+      x: { ticks: { color: mut, maxTicksLimit: 10 }, grid: { color: line } },
+      y: { beginAtZero: true, suggestedMax: 8,
+           ticks: { color: mut, callback: v => v + ' mA' }, grid: { color: line } }
+    }
+  }
+});
+
+// 2) 扣除零点前后
+const labels = ['72 MHz\nSleep','8 MHz\nSleep','8 MHz\nStop','8 MHz\n4G ON'];
+const raw    = [22.48, 10.25, 8.20, 52.52];
+const real   = [16.48,  4.25, 2.20, 46.52];
+new Chart(document.getElementById('compareChart'), {
+  type: 'bar',
+  data: {
+    labels: labels,
+    datasets: [
+      { label: '实测读数（含 ~6 mA 零点）', data: raw,  backgroundColor: 'rgba(37,99,235,.25)',
+        borderColor: '#2563eb', borderWidth: 1.4, borderRadius: 5 },
+      { label: '扣除零点后的板子真实电流', data: real, backgroundColor: 'rgba(22,163,74,.75)',
+        borderColor: '#15803d', borderWidth: 1.4, borderRadius: 5 }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { labels: { color: ink, boxWidth: 14, font:{size:12} } },
+      tooltip: { callbacks: { label: c => c.dataset.label + '：' + c.parsed.y.toFixed(2) + ' mA' } }
+    },
+    scales: {
+      x: { ticks: { color: mut, font:{size:12} }, grid: { display:false } },
+      y: { beginAtZero: true, ticks: { color: mut, callback: v => v + ' mA' }, grid: { color: line } }
+    }
+  }
+});
+</script>
+</body>
+</html>

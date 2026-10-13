@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>断开 R24 后 · Stop 进入 1 mA 量级</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --line:#e5e7eb; --ink:#1f2328; --mut:#6b7280;
+    --red:#d9534f; --blue:#2563eb; --green:#16a34a; --amber:#f59e0b; --purple:#7c3aed; --cyan:#0891b2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:32px 22px 64px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  h3{font-size:15px;margin:20px 0 8px;color:#374151}
+  .sub{color:var(--mut);font-size:13.5px;margin-bottom:26px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:6px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi .lab{font-size:12.5px;color:var(--mut);margin-bottom:6px}
+  .kpi .val{font-size:25px;font-weight:700;letter-spacing:-.4px}
+  .kpi .val small{font-size:13px;font-weight:500;color:var(--mut);margin-left:3px}
+  .kpi.good .val{color:var(--green)}
+  .kpi.warn .val{color:var(--amber)}
+  .kpi.bad .val{color:var(--red)}
+  .kpi.blue .val{color:var(--blue)}
+  .kpi.pur .val{color:var(--purple)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left}
+  th{background:#fafbfc;font-weight:600;color:#374151;font-size:13px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}
+  .tag.ok{background:#e8f6ee;color:#15803d}
+  .tag.no{background:#fdeceb;color:#b91c1c}
+  .tag.q{background:#fff5e6;color:#b45309}
+  .hl{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .hl b{color:#b45309}
+  .ok{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .ok b{color:#15803d}
+  code{background:#f3f4f6;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+       font:13px/1.5 "Cascadia Mono",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;
+      font:13px/1.6 "Cascadia Mono",Consolas,monospace}
+  ul{margin:8px 0 0 0;padding-left:22px}
+  li{margin:4px 0}
+  /* 纯 CSS 柱状图（无外部依赖，离线可渲染） */
+  .bars{display:flex;align-items:flex-end;gap:30px;height:300px;padding:8px 6px 0;
+        border-bottom:2px solid var(--line)}
+  .bcol{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+  .bval{font-weight:700;font-size:15.5px;margin-bottom:6px;font-variant-numeric:tabular-nums}
+  .bar{width:100%;max-width:92px;border-radius:8px 8px 0 0}
+  .blab{margin-top:9px;font-size:12.5px;color:var(--mut);text-align:center;min-height:36px}
+  @media (max-width:560px){.bars{gap:12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>断开 R24（LEDB2 常亮）—— Stop 模式进入 <span style="color:var(--green)">1 mA 量级</span></h1>
+  <div class="sub">2026-10-13 凌晨 · 车牌 ver2 · 8 MHz 固件 · 4G 断电（PA3=0）· AFU F-11 真值表 · 表在 <code>COM4</code> · 电压按 3.3 V 计</div>
+
+  <div class="kpis">
+    <div class="kpi good"><div class="lab">断开 R24 · Run（8 MHz）</div><div class="val">2.395 <small>mA</small></div></div>
+    <div class="kpi pur"><div class="lab">断开 R24 · Stop <b>★ 新低</b></div><div class="val">1.162 <small>mA</small></div></div>
+    <div class="kpi blue"><div class="lab">R24 贡献的电流</div><div class="val">≈ 1.1 <small>mA</small></div></div>
+    <div class="kpi warn"><div class="lab">距 1 mA 目标</div><div class="val">+0.16 <small>mA</small></div></div>
+  </div>
+
+  <h2>1. 结论</h2>
+  <div class="card">
+    <div class="ok">
+      <b>断开 R24 后，Stop 模式实测 1.162 mA —— 首次进入 1 mA 量级。</b><br>
+      这条通路上 R24（510 Ω）+ LEDB2 蓝灯常亮实际吃掉 <b>≈ 1.1 mA</b>，是整板静态电流里最大的一块"可拆"负担。
+      拆掉之后 Run 从 3.47 降到 2.40 mA，Stop 从 2.31 降到 <b>1.16 mA</b>。
+    </div>
+    <div class="hl">
+      <b>两组实测的 Δ 高度一致（−1.08 / −1.15 mA）</b>，说明 LEDB2 的实际功耗就是 ≈1.1 mA，
+      而且它在 Run / Stop 下都一样亮、一样耗。此前文档里估的「≈1.4 mA」略高。
+    </div>
+  </div>
+
+  <h2>2. 实测对照（F-11 真值，中位）</h2>
+  <div class="card">
+    <div class="bars">
+      <div class="bcol"><div class="bval" style="color:#64748b">3.47</div><div class="bar" style="height:241px;background:#94a3b8"></div><div class="blab">Run · R24 接通</div></div>
+      <div class="bcol"><div class="bval" style="color:var(--green)">2.395</div><div class="bar" style="height:166px;background:#16a34a"></div><div class="blab">Run · R24 断开</div></div>
+      <div class="bcol"><div class="bval" style="color:#64748b">2.31</div><div class="bar" style="height:160px;background:#94a3b8"></div><div class="blab">Stop · R24 接通</div></div>
+      <div class="bcol"><div class="bval" style="color:var(--purple)">1.162</div><div class="bar" style="height:81px;background:#7c3aed"></div><div class="blab">Stop · R24 断开<br><b style="color:var(--purple)">★ 新低</b></div></div>
+    </div>
+    <table style="margin-top:16px">
+      <thead><tr><th>状态</th><th class="num">R24 接通</th><th class="num">R24 断开</th><th class="num">Δ（R24 贡献）</th><th>复现情况</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>Run</b>（8 MHz，4G 断）</td>
+          <td class="num">3.47 mA</td>
+          <td class="num"><b>2.395 mA</b></td>
+          <td class="num" style="color:var(--green)">−1.08 mA</td>
+          <td><span class="tag ok">min 2.36 × 多组一致</span></td>
+        </tr>
+        <tr>
+          <td><b>Stop</b>（SCB_SCR=0x04）</td>
+          <td class="num">2.31 mA</td>
+          <td class="num"><b>1.162 mA</b></td>
+          <td class="num" style="color:var(--green)">−1.15 mA</td>
+          <td><span class="tag ok">1.162/1.163/1.164/1.162 四连一致</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="color:var(--mut);font-size:13px;margin-top:12px">
+      两组独立测量给出的 Δ 相差 0.07 mA（6%），互为佐证。Stop 读数极稳（四分位几乎重合），
+      说明 MCU 确实停住了；Run 读数有 ±0.9 mA 的周期性毛刺（来自 500 ms 的 SC7A20H 软 I2C 节拍），
+      但中位值稳定。
+    </p>
+  </div>
+
+  <h2>3. 达成路径回顾</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>步骤</th><th class="num">电流</th><th>省下</th><th>手段</th></tr></thead>
+      <tbody>
+        <tr><td>原始（72 MHz，4G 上电）</td><td class="num">≈ 22.5 mA</td><td class="num">—</td><td>—</td></tr>
+        <tr><td><b>L1</b> 降频 72 → 8 MHz</td><td class="num">10.5 mA</td><td class="num" style="color:var(--green)">−11.8 mA</td><td>PLL off，AHB/APB DIV1</td></tr>
+        <tr><td>关 4G 电源（PA3=0）</td><td class="num">3.47 mA</td><td class="num" style="color:var(--green)">−55.9 mA</td><td>V4G 断电（按需上电）</td></tr>
+        <tr><td><b>L2</b> 进 Stop</td><td class="num">2.31 mA</td><td class="num" style="color:var(--green)">−1.16 mA</td><td>SLEEPDEEP + WFI</td></tr>
+        <tr><td><b>拆 LEDB2 常亮（R24）</b></td><td class="num"><b>1.16 mA</b></td><td class="num" style="color:var(--green)">−1.15 mA</td><td>去掉这颗常亮 LED</td></tr>
+      </tbody>
+    </table>
+    <div class="ok" style="margin-top:16px">
+      <b>1 mA 量级达成。</b>剩下 0.16 mA 的差距，主要来自：MCU 在 Stop 与唤醒之间的往复
+      （UART 等打断）、以及尚未归零的 LDO 静态电流与漏电。
+    </div>
+  </div>
+
+  <h2>4. 操作踩坑（重要）</h2>
+  <div class="card">
+    <div class="hl">
+      <b>⚠️ 进了 Stop 之后，清 <code>SCB_SCR=0</code> 并不能让 MCU 退出 Stop。</b><br>
+      <code>WFI</code> 已经在 Stop 里等中断；STM32 的 <b>Stop 只能由 EXTI 唤醒</b>，
+      内核异常（SysTick 等）唤醒不了它。这块板上唯一可靠的退出方式是 <b>复位</b>
+      （<code>mklink reset</code> 或按 SW4）。
+    </div>
+    <ul>
+      <li>实测：清掉 SLEEPDEEP 后电流卡在 <b>1.94 mA</b>（既不是 Run 的 2.40，也不是 Stop 的 1.16）——
+          正是"已清标志但人还在 Stop 里"的中间态。</li>
+      <li>往 <code>SCB_ICSR(0xE000ED04)</code> 写 <code>PENDSTSET</code> 触发 SysTick 异常，
+          <code>PENDSTSET</code> 位不被消费（读回仍是 1），也验证了这一点。</li>
+      <li>另：<code>mklink</code> 的 PATH 会漂。若报 <code>mklink: command not found</code>，
+          用绝对路径 <code>C:\Users\Administrator\.workbuddy\binaries\python\envs\default\Scripts\mklink.exe</code>。</li>
+    </ul>
+  </div>
+
+  <h2>5. 下一步（要真正 ≤1 mA）</h2>
+  <div class="card">
+    <ul>
+      <li><b>固件化 Stop</b>：现在 Stop 是 SWD 外部注入的。要在固件里真正落实：主循环空闲即 <code>HAL_PWR_EnterSTOPMode()</code>，
+          并用 <b>EXTI（UART RX 引脚）</b> 做唤醒源——否则进了就出不来。</li>
+      <li><b>关掉唤醒抖动</b>：Stop↔唤醒往复是 1.16 mA 里剩下的主要部分。把非必要的周期性中断（TIM3 / SysTick 唤醒节拍）停掉可再降。</li>
+      <li><b>量 LDO 静态</b>：CN3142（Iq 3 µA）+ ME6206A33（Iq 8 µA）本身很小，但要核实实测漏电。</li>
+      <li>接好 F-11 电压通道，拿到真实 VCC 而非假定 3.3 V。</li>
+    </ul>
+  </div>
+
+  <p style="color:var(--mut);font-size:12.5px;margin-top:26px">
+    数据来源：AFU F-11（<code>COM4</code>，38400 8N1）· MKLink 探针 <code>usb-6bee5de2ad9b32857ecc1695</code> ·
+    Stop 注入：<code>DBGMCU_CR=0x02</code> + <code>SCB_SCR=0x04</code>。
+  </p>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L1 降频实测（72MHz → 8MHz）</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root{
+    --bg:#ffffff; --bg2:#f6f5f1; --fg:#1f1f1e; --fg2:#5f5e5a; --fg3:#888780;
+    --bd:rgba(0,0,0,.12); --card:#ffffff; --accent:#378ADD;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#1c1c1b; --bg2:#262625; --fg:#f1efe8; --fg2:#b4b2a9; --fg3:#888780;
+      --bd:rgba(255,255,255,.16); --card:#242423; --accent:#85B7EB; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.65;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 24px 64px;}
+  h1{font-size:22px;font-weight:500;margin:0 0 6px;}
+  .sub{color:var(--fg2);font-size:13px;margin:0 0 4px;}
+  .meta{color:var(--fg3);font-size:12px;margin:0 0 28px;}
+  h2{font-size:16px;font-weight:500;margin:36px 0 12px;padding-bottom:8px;border-bottom:0.5px solid var(--bd);}
+  h3{font-size:14px;font-weight:500;margin:22px 0 10px;}
+  p{margin:10px 0;}
+  .muted{color:var(--fg2);}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0;}
+  .card{background:var(--bg2);border-radius:12px;padding:14px 16px;}
+  .card .lbl{font-size:12px;color:var(--fg2);margin-bottom:4px;}
+  .card .num{font-size:24px;font-weight:500;line-height:1.2;}
+  .card .unit{font-size:13px;color:var(--fg2);font-weight:400;}
+  .chartbox{background:var(--card);border:0.5px solid var(--bd);border-radius:12px;padding:16px 18px;margin:14px 0;}
+  .chartbox h3{margin-top:0;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin:12px 0;}
+  th,td{padding:7px 8px;border-bottom:0.5px solid var(--bd);text-align:right;white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;white-space:normal;}
+  thead th{color:var(--fg2);font-weight:500;}
+  .note{background:var(--bg2);border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px;margin:14px 0;color:var(--fg2);font-size:13px;}
+  .warn{border-left-color:#D85A30;}
+  ul{margin:10px 0;padding-left:22px;} li{margin:5px 0;}
+  code{background:var(--bg2);border-radius:4px;padding:1px 5px;font-size:12.5px;font-family:"Cascadia Mono",Consolas,monospace;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>L1 降频实测：72 MHz → 8 MHz</h1>
+<p class="sub">车牌板 · STM32F103C8T6 · 状态统一为「4G 断电 + LED 全灭」· 探针 VCC 3.38 V</p>
+<p class="meta">2026-10-12 · pyOCD 实烧 · <code>mklink power-read</code> 采样 · 烧后读 <code>SystemCoreClock = 0x007A1200</code> 确认生效</p>
+
+<div class="cards">
+  <div class="card"><div class="lbl">72 MHz（原）</div><div class="num">22.48<span class="unit"> mA</span></div></div>
+  <div class="card"><div class="lbl">8 MHz（L1）</div><div class="num">10.70<span class="unit"> mA</span></div></div>
+  <div class="card"><div class="lbl">节省</div><div class="num">−11.8<span class="unit"> mA（−52%）</span></div></div>
+  <div class="card"><div class="lbl">8 MHz 剩余</div><div class="num">~10<span class="unit"> mA 非 MCU</span></div></div>
+</div>
+
+<h2>1. 主结果</h2>
+<div class="chartbox">
+  <h3>整板电流：同一块板、同一状态，只换固件</h3>
+  <canvas id="c1" height="130"></canvas>
+</div>
+
+<table>
+  <thead><tr><th>固件</th><th>电流均值</th><th>σ</th><th>样本</th></tr></thead>
+  <tbody>
+    <tr><td>72 MHz（HSE×PLL9）</td><td>22.48 mA</td><td>1.64</td><td>12</td></tr>
+    <tr><td><b>8 MHz（HSE 直出、关 PLL、关 HSI）</b></td><td><b>10.32 ~ 10.70 mA</b></td><td>0.6 ~ 1.0</td><td>8~12</td></tr>
+  </tbody>
+</table>
+
+<h2>2. 标尺验证：电流读数可信</h2>
+<p class="muted">三路 LED 的电流由硬件限流电阻决定，与主频无关。8 MHz 与 72 MHz 的净增若一致，说明读数线性可信。</p>
+<div class="chartbox">
+  <h3>LED 净增电流对比（8 MHz vs 72 MHz）</h3>
+  <canvas id="c2" height="130"></canvas>
+</div>
+
+<table>
+  <thead><tr><th>状态</th><th>8 MHz</th><th>72 MHz</th><th>差</th></tr></thead>
+  <tbody>
+    <tr><td>红 255</td><td>+7.58</td><td>+7.33</td><td>+0.25</td></tr>
+    <tr><td>黄 255</td><td>+7.93</td><td>+7.39</td><td>+0.54</td></tr>
+    <tr><td>绿 255</td><td>+19.75</td><td>+19.18</td><td>+0.57</td></tr>
+    <tr><td>RGB 全亮</td><td>+33.88</td><td>+33.59</td><td>+0.29</td></tr>
+  </tbody>
+</table>
+
+<h2>3. 关键发现：剩的 ~10 mA 不是 MCU</h2>
+<p>在 8 MHz 固件上把内核停住、把外设时钟全关，电流几乎不动：</p>
+<div class="chartbox">
+  <h3>逐层「掐掉」MCU 后的整板电流</h3>
+  <canvas id="c3" height="130"></canvas>
+</div>
+
+<table>
+  <thead><tr><th>操作</th><th>电流</th><th>变化</th></tr></thead>
+  <tbody>
+    <tr><td>正常（4G 断电 + LED 全灭）</td><td>10.36 mA</td><td>—</td></tr>
+    <tr><td><code>mklink halt</code>：内核停止执行</td><td>10.02 mA</td><td>−0.34</td></tr>
+    <tr><td>再关 APB2 + APB1 全部外设时钟</td><td>9.74 mA</td><td>−0.18</td></tr>
+    <tr><td>再关 AHB 外设时钟</td><td>9.80 mA</td><td>−0.11</td></tr>
+  </tbody>
+</table>
+
+<div class="note warn">
+  <b>结论：8 MHz 下 MCU（内核 + 全部外设时钟）合计只贡献 ~0.6 mA。</b><br>
+  板上还有 <b>~9.7 mA 的固定负载</b>，与主频无关、与 CPU 是否执行也无关。
+  它同样存在于 72 MHz 那一版里 —— 所以旧结论「21.96 mA 主体是 MCU」应修正为
+  <b>≈12 mA（MCU，随频率变化）+ ≈10 mA（固定负载，来源未明）</b>。<br>
+  这 ~10 mA 才是 1 mA 目标真正的拦路虎。
+</div>
+
+<h3>已排除 / 待查</h3>
+<ul>
+  <li>❌ LED 驱动电路 —— 全灭时电流不变</li>
+  <li>❌ USART1 引脚向 4G 模组反向馈电 —— PA9/PA10 改模拟输入仅 −0.4 mA</li>
+  <li>❌ 4G 模组 —— V4G 已断电（PA3=0 读回确认）</li>
+  <li>❓ VCC33 侧 LDO 的静态电流（型号待确认）</li>
+  <li>❓ 板上是否有常亮指示 LED / 其它常供电器件</li>
+</ul>
+
+<h2>4. 附带修好的两个「假故障」</h2>
+<div class="note">
+  本轮排查中一度以为「8 MHz 下 LED 不亮、4G 不联网」，实为 <b>SWD 写寄存器的方式</b>导致的，
+  与固件无关：
+  <ul>
+    <li><code>mklink write-ram</code> 写 TIK3-&gt;CCRx 时，<b>再写一次高字节会把整个 16 位寄存器清零</b>
+        （低字节 0xFF 后写高字节 0x00 → CCR 变 0）。亮度 0..255 只占低字节，<b>只写低字节即可</b>。</li>
+    <li>同理写 <code>GPIOA_CRH</code> 高字节把 CRH 清零 → 打断 USART1（PA9/PA10）→ 4G 模组失联。
+        恢复办法：重新烧录。</li>
+  </ul>
+</div>
+
+<h2>5. 改动与回滚</h2>
+<table>
+  <thead><tr><th>文件</th><th>改动</th></tr></thead>
+  <tbody>
+    <tr><td><code>Core/Inc/board_config.h</code></td><td>新增 <code>#define CPU_CLOCK_8MHZ</code>（一行开关）；<code>LED_PWM_PRESCALER</code> 随主频选（8M→0 / 72M→255）；新增 <code>LED_PWM_TIMCLK_HZ</code></td></tr>
+    <tr><td><code>Core/Src/main.c</code></td><td><code>SystemClock_Config()</code>：8 MHz 档 = PLL_OFF + SYSCLK=HSE + AHB/APB1/APB2 全 DIV1 + FLASH_LATENCY_0 + ADC=DIV2 + <code>__HAL_RCC_HSI_DISABLE()</code></td></tr>
+    <tr><td><code>Core/Src/board_io.c</code></td><td>LED PWM 频率打印改用 <code>LED_PWM_TIMCLK_HZ</code></td></tr>
+  </tbody>
+</table>
+<p class="muted">回滚：注释掉 <code>board_config.h</code> 里那一行即可。全程不碰 SWD 引脚、不写选项字节 —— 无变砖风险。</p>
+
+<script>
+const cs = getComputedStyle(document.documentElement);
+const FG = cs.getPropertyValue('--fg2').trim(), BD = cs.getPropertyValue('--bd').trim();
+Chart.defaults.color = FG; Chart.defaults.borderColor = BD;
+Chart.defaults.font.family = '-apple-system,"Segoe UI","Microsoft YaHei",sans-serif';
+const R = '#E24B4A', G = '#1D9E75', B = '#378ADD', O = '#BA7517';
+
+new Chart(document.getElementById('c1'), {
+  type: 'bar',
+  data: { labels: ['72 MHz（原）', '8 MHz（L1 降频）'],
+    datasets: [{ label: '整板电流 (mA)', data: [22.48, 10.70],
+      backgroundColor: [R, G], borderRadius: 6, barPercentage: .5 }] },
+  options: { plugins: { legend: { display: false },
+      title: { display: true, text: '4G 断电 + LED 全灭', color: FG, font: { size: 12 } } },
+    scales: { y: { beginAtZero: true, title: { display: true, text: 'mA' } } } }
+});
+
+new Chart(document.getElementById('c2'), {
+  type: 'bar',
+  data: { labels: ['红 255', '黄 255', '绿 255', 'RGB 全亮'],
+    datasets: [
+      { label: '8 MHz 净增', data: [7.58, 7.93, 19.75, 33.88], backgroundColor: G, borderRadius: 5 },
+      { label: '72 MHz 净增', data: [7.33, 7.39, 19.18, 33.59], backgroundColor: B, borderRadius: 5 }] },
+  options: { plugins: { legend: { position: 'bottom' } },
+    scales: { y: { beginAtZero: true, title: { display: true, text: '净增 mA' } } } }
+});
+
+new Chart(document.getElementById('c3'), {
+  type: 'bar',
+  data: { labels: ['正常', '内核 halt', '+关 APB1/2 时钟', '+关 AHB 时钟'],
+    datasets: [{ label: '整板电流 (mA)', data: [10.36, 10.02, 9.74, 9.80],
+      backgroundColor: [O, O, O, O], borderRadius: 6, barPercentage: .55 }] },
+  options: { plugins: { legend: { display: false },
+      title: { display: true, text: '8 MHz，4G 断电 + LED 全灭', color: FG, font: { size: 12 } } },
+    scales: { y: { beginAtZero: false, min: 9, max: 11, title: { display: true, text: 'mA' } } } }
+});
+</script>
+</div>
+</body>
+</html>

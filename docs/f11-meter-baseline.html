@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AFU F-11 真值表接入 · 3.44 mA</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --line:#e5e7eb; --ink:#1f2328; --mut:#6b7280;
+    --red:#d9534f; --blue:#2563eb; --green:#16a34a; --amber:#f59e0b; --purple:#7c3aed; --cyan:#0891b2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:32px 22px 64px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  h3{font-size:15px;margin:20px 0 8px;color:#374151}
+  .sub{color:var(--mut);font-size:13.5px;margin-bottom:26px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:6px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi .lab{font-size:12.5px;color:var(--mut);margin-bottom:6px}
+  .kpi .val{font-size:25px;font-weight:700;letter-spacing:-.4px}
+  .kpi .val small{font-size:13px;font-weight:500;color:var(--mut);margin-left:3px}
+  .kpi.good .val{color:var(--green)}
+  .kpi.warn .val{color:var(--amber)}
+  .kpi.bad .val{color:var(--red)}
+  .kpi.blue .val{color:var(--blue)}
+  .chartbox{position:relative;height:300px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left}
+  th{background:#fafbfc;font-weight:600;color:#374151;font-size:13px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}
+  .tag.ok{background:#e8f6ee;color:#15803d}
+  .tag.no{background:#fdeceb;color:#b91c1c}
+  .tag.q{background:#fff5e6;color:#b45309}
+  .hl{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .hl b{color:#b45309}
+  .ok{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .ok b{color:#15803d}
+  code{background:#f3f4f6;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+       font:13px/1.5 "Cascadia Mono",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;
+      font:13px/1.6 "Cascadia Mono",Consolas,monospace}
+  ul{margin:8px 0 0 0;padding-left:22px}
+  li{margin:4px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>AFU F-11 高精度真值表接入 —— 整板电流 <span style="color:var(--green)">3.44 mA</span></h1>
+  <div class="sub">2026-10-12 深夜实测 · 车牌 ver2 · 8 MHz 固件 · 4G 已断 · LED 全灭 · 探针 VCC 3.38 V · 表在 <code>COM4</code>（固件 <code>Dev1.0 20231111</code>）</div>
+
+  <div class="kpis">
+    <div class="kpi good"><div class="lab">F-11 中位电流（真值 · 30.6 s）</div><div class="val">3.44 <small>mA</small></div></div>
+    <div class="kpi blue"><div class="lab">探针原始 − 零点(6.1)</div><div class="val">≈3.2 <small>mA</small></div></div>
+    <div class="kpi warn"><div class="lab">F-11 电压通道</div><div class="val">0 <small>mV ⚠ 未接</small></div></div>
+    <div class="kpi"><div class="lab">真值 vs 探针（扣零点）差</div><div class="val">0.24 <small>mA</small></div></div>
+  </div>
+
+  <h2>1. 结论先说</h2>
+  <div class="card">
+    <div class="ok">
+      <b>两台仪器互证成功：F-11 真值 3.44 mA，探针扣零点后 ≈3.2 mA，差 0.24 mA（7%）。</b><br>
+      真实静态电流就在 <b>3.4 mA</b> 量级，既不是早前怀疑的「8.20 mA 神秘负载」，也不是 10 mA。
+      §12「探针 ≈6 mA 零点偏置」的推论被第三方仪器<b>定量</b>证实。
+    </div>
+    <div class="hl">
+      <b>⚠ 三点要处理：</b><br>
+      ① <b>电压字段恒 <code>00000</code></b> ⇒ 表的 V 采样通道（<code>IN+</code>↔<code>IN−</code>）没接好，
+      不是电源真的 0 V。<br>
+      ② <b>电表 USB 一掉线，被测板子立刻断电</b>（探针 <code>idcode</code> 变 <code>0x0</code>、电流退回零点）
+      —— 切挡/通路在失电时断开。<b>测完不要随手拔 Type-C。</b><br>
+      ③ <b>探针当前读不到目标</b>（<code>idcode=0x0</code>），但表能测到 3.44 mA ⇒ 板子在跑，
+      SWD 没接 / 被表的串联接地参考影响。要在线调参需先恢复 SWD。
+    </div>
+  </div>
+
+  <h2>2. 首次接入的瞬态</h2>
+  <div class="sub" style="margin:-6px 0 12px">1 s 抓包（约 27 帧）。前 17 帧稳定在 ~60 mA，随后一档跳到 ~15 mA —— 上电/自动切挡瞬态，不是稳态。</div>
+  <div class="card">
+    <div class="chartbox"><canvas id="c1"></canvas></div>
+  </div>
+
+  <h2>3. 稳定后的读数</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>来源</th><th class="num">电流</th><th class="num">电压</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>AFU F-11</b>（真值）</td>
+          <td class="num"><b>3.44 mA</b><br><small>均值 3.579 / 谷 3.42 / 峰 4.37</small></td>
+          <td class="num">0 mV</td>
+          <td>30.6 s / 307 帧（约 10 Hz）；周期性 ≈3.9–4.4 mA 突发（约每 100 ms 一次）</td>
+        </tr>
+        <tr>
+          <td>探针 <code>power-read</code> 原始（同状态）</td>
+          <td class="num">8.49–10.90 mA<br><small>中位 ≈9.3</small></td>
+          <td class="num">3377 mV</td>
+          <td><code>idcode=0x0</code>（SWD 未通）</td>
+        </tr>
+        <tr>
+          <td>探针零点（目标断开时）</td>
+          <td class="num">5.88–6.30 mA<br><small>中位 ≈6.1</small></td>
+          <td class="num">3380 mV</td>
+          <td>§12 实测</td>
+        </tr>
+        <tr>
+          <td><b>探针 − 零点</b></td>
+          <td class="num"><b>≈3.2 mA</b></td>
+          <td class="num">—</td>
+          <td>与 F-11 的 3.44 mA <b>差 0.24 mA（7%）</b> ✓</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="color:var(--mut);font-size:13px;margin-top:12px">
+      残差 0.24 mA 来自：表的串联压降（量程内 ≤82 mV）、表自身功耗（&lt;7 mA，A 版会消耗被测回路一部分）、
+      以及零点本身会漂移（§12.5）。
+    </p>
+  </div>
+
+  <h2>4. 表的协议（已定案）</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>项</th><th>值</th></tr></thead>
+      <tbody>
+        <tr><td>串口</td><td>CH340，<b>38400 8N1</b>，行尾 <code>\r\n</code></td></tr>
+        <tr><td>数据行</td><td><code>电流µA,电压mV</code>，定宽 <b>7 位 / 5 位</b>，例 <code>012830,03395</code> = 12.830 mA / 3.395 V</td></tr>
+        <tr><td>换算</td><td>I(mA) = f1 ÷ 1000 · U(V) = f2 ÷ 1000</td></tr>
+        <tr><td>电流量程</td><td>一挡 1 µA–3.99 mA · 二挡 4 mA–799 mA · 三挡 800 mA–4 A，<b>硬件自动无级切换</b></td></tr>
+        <tr><td>分辨率 / 精度</td><td>电流 <b>1 µA</b>（±1%）· 电压 <b>1 mV</b>（±0.1%），0.10–26.00 V</td></tr>
+        <tr><td>接线关键</td><td><b>分流器在负极/回流线</b>（<code>IN− → 分流器 → OUT−</code>）；V 通道并联 <code>IN+</code>↔<code>IN−</code>；<b>4Pin R/T/V/G 四根都要接</b></td></tr>
+        <tr><td>命令</td><td><code>sys setprint 0|1|2</code> · <code>sys interval &lt;ms&gt;</code> · <code>sys baudrate 0|1|2</code> · <code>sys setcal &lt;µA&gt;</code> · <code>sys version</code></td></tr>
+      </tbody>
+    </table>
+    <p style="color:var(--mut);font-size:13px;margin-top:12px">
+      定宽依据：官方规格书 <code>sys setcal</code> 范围 0–9999999 单位 µA（7 位）；电流满量程 4 A = 4 000 000 µA、
+      电压满量程 26 V = 26 000 mV。另有旁证：用户自己的 <code>battery_charging_analysis.py</code> 正是
+      <code>int(f1)/1000 → mA</code>、<code>int(f2)/1000 → V</code>。
+    </p>
+  </div>
+
+  <h2>5. 已固化为技能 <code>afu-f11-meter</code></h2>
+  <div class="card">
+    <pre>F11="C:\Users\Administrator\.workbuddy\skills\afu-f11-meter\scripts\f11.cmd"
+
+%F11% list --text                 # 自动识别 F-11 在哪一路串口
+%F11% read --secs 5 --text        # 中位/均值/峰谷
+%F11% stream --secs 60 --csv pwr.csv   # 带主机时间戳长记录
+%F11% cmd "sys version"           # 原始命令回显
+%F11% setprint 2 / interval 1000 / setcal 12345</pre>
+    <ul>
+      <li>纯 pyserial，无第三方二进制；stdout 恒为 JSON（<code>--text</code> 转人类可读）</li>
+      <li>端口自动探测：逐个串口按 38400 试读，命中 <code>^\d{7},\d{5}$</code> 即认定为 F-11</li>
+      <li>自带告警：电压恒 0 时提示「V 采样未接好」</li>
+    </ul>
+  </div>
+
+  <h2>6. 下一步</h2>
+  <div class="card">
+    <ul>
+      <li>接好 V 通道：<code>IN+</code> → 探针 VCC，<code>IN−</code> → 探针 GND，拿到真实电压</li>
+      <li>恢复 SWD（当前 <code>idcode=0x0</code>），才能在线切固件状态做 A/B 对比</li>
+      <li>用 1 kΩ 负载（≈3.38 mA）做比例标定，判定探针偏置是「加法」还是「比例」</li>
+      <li>用 F-11 复测 <b>Stop 模式</b>真实电流（预计 ≈1.0–1.6 mA）</li>
+      <li>拆掉 LEDB2 常亮（R24 510 Ω）后复测，验证 1 mA 目标</li>
+    </ul>
+  </div>
+
+  <p style="color:var(--mut);font-size:12.5px;margin-top:26px">
+   数据来源：COM4 抓包（<code>docs/f11-baseline-8mhz.csv</code>，30.6 s / 307 帧）+
+    首次 COM13 抓包（<code>.workbuddy/tmp/com13_38400.bin</code>）×
+    官方规格书 v3.0 × <code>E:\C++proj\MPPT_temp\battery_charging_analysis.py</code>。
+  </p>
+</div>
+
+<script>
+const transient = [61.29,57.77,60.96,59.92,59.84,58.02,60.31,60.29,60.56,57.69,59.69,60.46,60.46,57.57,60.91,60.49,62.96,22.53,15.41,16.91,15.41,18.06,15.56,16.31,14.34,16.01,15.84];
+new Chart(document.getElementById('c1'), {
+  type:'line',
+  data:{
+    labels: transient.map((_,i)=>i),
+    datasets:[{
+      label:'F-11 电流 (mA)',
+      data: transient,
+      borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,.10)',
+      borderWidth:2, pointRadius:2.5, pointBackgroundColor:'#2563eb', fill:true, tension:.25
+    },{
+      label:'稳定基线 3.44 mA',
+      data: transient.map(()=>3.44),
+      borderColor:'#16a34a', borderWidth:1.5, borderDash:[6,4], pointRadius:0, fill:false
+    }]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    interaction:{mode:'index', intersect:false},
+    plugins:{
+      legend:{labels:{boxWidth:12, font:{size:12}}},
+      tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${c.parsed.y.toFixed(2)}`}}
+    },
+    scales:{
+      x:{title:{display:true,text:'帧序号（约 35 fps）',font:{size:12}}, grid:{color:'#eef1f4'}, ticks:{font:{size:11}}},
+      y:{title:{display:true,text:'电流 (mA)',font:{size:12}}, grid:{color:'#eef1f4'},
+         ticks:{font:{size:11}, callback:v=>v.toFixed(0)}}
+    }
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>整板电流实测（校正版）—— 探针 power-read 有 +6.7 mA 直流偏置，用 F-11 真值重测</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1e2430; --mut:#6b7280; --line:#e5e8ef;
+    --green:#16a34a; --red:#dc2626; --blue:#2563eb; --purple:#7c3aed; --amber:#d97706;
+    --old:#c7d2fe; --oldb:#818cf8; --new:#86efac; --newb:#22c55e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 4vw;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.65}
+  h1{font-size:25px;margin:0 0 6px;letter-spacing:.2px}
+  h2{font-size:18px;margin:36px 0 12px;border-left:4px solid var(--blue);padding-left:11px}
+  h3{font-size:15px;margin:18px 0 8px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:14px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .lab{font-size:12px;color:var(--mut)}
+  .kpi .val{font-size:23px;font-weight:700;margin-top:3px}
+  .kpi .val small{font-size:12.5px;font-weight:400;color:var(--mut)}
+  .good{border-left:4px solid var(--green);background:#f0fdf4;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .bad{border-left:4px solid var(--red);background:#fef2f2;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .hl{border-left:4px solid var(--amber);background:#fffbeb;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .info{border-left:4px solid var(--blue);background:#eff6ff;border-radius:8px;padding:12px 15px;margin:11px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .mut{color:var(--mut);font-size:12.5px}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.6px;
+       font-family:"Cascadia Code",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.6px;line-height:1.55}
+  svg{max-width:100%;height:auto}
+  /* ---------- 纯 CSS 柱状图 ---------- */
+  .bars{display:flex;align-items:flex-end;gap:3px;height:190px;margin:22px 0 4px;padding:0 4px;
+        border-bottom:2px solid var(--line);position:relative}
+  .bars::before{content:"";position:absolute;left:0;right:0;top:0;border-top:1px dashed var(--line)}
+  .bar{flex:1;position:relative;border-radius:4px 4px 0 0;min-width:8px}
+  .bar span{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-size:10px;
+            color:var(--mut);white-space:nowrap}
+  .bar i{position:absolute;bottom:-19px;left:50%;transform:translateX(-50%);font-size:9.5px;
+         color:var(--mut);white-space:nowrap;font-style:normal;writing-mode:horizontal-tb}
+  .b-old{background:var(--old);border:1px solid var(--oldb);border-bottom:none}
+  .b-new{background:var(--new);border:1px solid var(--newb);border-bottom:none}
+  .legend{display:flex;gap:20px;font-size:12.5px;color:var(--mut);margin:28px 0 2px;justify-content:center;flex-wrap:wrap}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;
+       border:1px solid rgba(0,0,0,.12)}
+  .grp{display:flex;flex-direction:column;flex:1;gap:2px}
+  .grid2{display:flex;flex-direction:column;gap:2px;flex:1}
+  .row2{display:flex;gap:2px;height:100%;align-items:flex-end}
+</style>
+</head>
+<body>
+
+<h1>整板电流实测 · 校正版</h1>
+<div class="sub">
+  2026-10-13 · 车牌 ver2（STM32F103 @8 MHz + 银尔达 YED_DTU4 + SC7A20H）·
+  对照 <code>docs/power-consumption-report-v2.html</code>（2026-10-12，MKLink 探针 <code>power-read</code>）<br>
+  本次全部用 <b>安服优 F-11 真值电流表</b>（COM4，串联在被测回路内）重测 · 板子状态全部由 SWD 直接置位（不经 MQTT）·
+  图表为纯 CSS/SVG，无外部 CDN
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="lab">探针直流偏置（本次实测）</div><div class="val" style="color:var(--amber)">+6.7 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">校正后 · 心跳开</div><div class="val">58.7 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">校正后 · 心跳关</div><div class="val" style="color:var(--green)">14.3 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">校正后 · 睡眠态</div><div class="val" style="color:var(--green)">13.9 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">心跳+探活 代价</div><div class="val" style="color:var(--red)">+43.7 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">绿灯 255 净增</div><div class="val">+20.2 <small>mA</small></div></div>
+</div>
+
+<h2>0. 结论先说</h2>
+<div class="card">
+  <div class="bad">
+    <b>① v2 的绝对值系统性偏高，主因是探针的直流偏置。</b>
+    本次把 F-11 与探针放在<b>同一回路</b>上成对读数：在 2.3～22.5 mA 的 10 个稳定档上，<code>探针 − F-11 = +5.97 ～ +7.83 mA</code>，<b>中位 +6.7 mA</b>，且几乎与负荷大小无关（近似纯加法偏置）。<br>
+    反证：v2 记的「心跳开」探针中位 <b>65.25</b>，减掉 +6.7 得 <b>58.6 mA</b>，与本次 F-11 实测 <b>58.7 mA</b>（58.1–58.8）几乎分毫不差。
+  </div>
+  <div class="hl">
+    <b>② 但还有第二个、更大的偏差 —— 它不在探针身上，所以「减一个常数」修不好。</b>
+    v2 的「心跳关 / 睡眠 / LED」那一族，扣掉 +6.7 之后是 <b>28～47 mA</b>；本次同一批状态只有 <b>14.3～34.5 mA</b>，一致地低 <b>约 14 mA</b>。<br>
+    这 14 mA 是 <b>4G 模组的空闲电平本身在两次测试之间变了</b>（由网络侧 DRX/eDRX、注册态决定，固件管不了）。这也是为什么必须<b>重测</b>，不能只做常数减法。
+  </div>
+  <div class="good">
+    <b>③ v2 的相对结论（差值）基本成立，但量值要改：</b>
+    心跳+探活 <b>+43.7 mA</b>（v2 记 +30.1）；绿灯 255 <b>+20.2</b>（v2 +18.6）、红灯 255 <b>+8.1</b>（+7.5）、黄灯 255 <b>+7.8</b>（+7.1）、红灯 64 <b>+2.2</b>（+1.3）；
+    「睡眠态 ≈ 心跳关」（本次 −0.4 ～ −1.1 mA）、「探活几乎不要钱」（+0.3 mA）<b>两条定性结论完全成立</b>。
+  </div>
+  <div class="info">
+    <b>④ 顺手修好的一个呈现问题：</b>v2 的图表用的是 CDN 上的 Chart.js，本机加载不出来，原报告打开是<b>空白图区</b>。本页全部改用纯 CSS/SVG 画图。
+  </div>
+</div>
+
+<h2>1. 为什么要校正：探针 <code>power-read</code> 的直流偏置</h2>
+<div class="card">
+  <p style="margin-top:0">
+    v2 报告里所有绝对电流（65.25 / 35.07 / 53.78 …）都来自 MKLink 探针的 <code>power-read</code>。
+    这个通道在<b>目标断开、电流应为 0</b> 时也照样给数：
+    2026-10-12 深夜实测空载零点中位 <b>5.70 mA</b>（范围 5.33–6.01，n=20），相隔数分钟另一组 <b>6.85 mA</b>（6.11–8.10）——
+    即「零点本身会漂」，见 <code>docs/probe-zero-offset.html</code>。
+  </p>
+
+  <h3>本次同回路成对实测（黄金证据）</h3>
+  <p class="mut" style="margin-top:2px">
+    F-11 串在探针 VCC 与板子 VCC 之间 → 两台仪器测的是<b>同一股电流</b>。
+    LED 档用 4G 断电做稳定基线（σ ≤ 2.4 mA），每档先回读校验 TIM3 的 CCR 再取数。
+  </p>
+  <table>
+    <thead><tr>
+      <th>负荷档</th><th class="num">F-11 真值<br>中位 (mA)</th><th class="num">探针 power-read<br>中位 (mA)</th>
+      <th class="num">偏置<br>探针 − 真值</th><th class="num">F-11 σ<br>(mA)</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>4G 断电 · LED 全灭</td><td class="num">2.30</td><td class="num">8.62</td><td class="num">+6.32</td><td class="num">0.5</td></tr>
+      <tr><td>4G 断电 · 红灯 64</td><td class="num">4.50</td><td class="num">11.32</td><td class="num">+6.82</td><td class="num">0.25</td></tr>
+      <tr><td>4G 断电 · 黄灯 64</td><td class="num">4.53</td><td class="num">11.27</td><td class="num">+6.74</td><td class="num">1.0</td></tr>
+      <tr><td>4G 断电 · 黄灯 255</td><td class="num">10.11</td><td class="num">16.79</td><td class="num">+6.68</td><td class="num">1.9</td></tr>
+      <tr><td>4G 断电 · 红灯 255</td><td class="num">10.38</td><td class="num">17.29</td><td class="num">+6.91</td><td class="num">2.4</td></tr>
+      <tr><td>4G 断电 · 绿灯 128</td><td class="num">13.43</td><td class="num">19.40</td><td class="num">+5.97</td><td class="num">2.4</td></tr>
+      <tr><td>4G 断电 · 绿灯 255</td><td class="num">22.47</td><td class="num">29.11</td><td class="num">+6.64</td><td class="num">0.25</td></tr>
+      <tr><td>4G 断电 · LED 全灭（复查）</td><td class="num">2.31</td><td class="num">8.95</td><td class="num">+6.64</td><td class="num">0.5</td></tr>
+      <tr><td>4G 在线 · 心跳关·探活关</td><td class="num">14.99</td><td class="num">21.95</td><td class="num">+6.96</td><td class="num">19.4</td></tr>
+      <tr><td>4G 在线 · 睡眠态</td><td class="num">13.85</td><td class="num">21.68</td><td class="num">+7.83</td><td class="num">1.1</td></tr>
+    </tbody>
+  </table>
+  <div class="bars">
+    <div class="bar b-new" style="height:70.2%"><span>6.3</span><i>灭</i></div>
+    <div class="bar b-new" style="height:75.8%"><span>6.8</span><i>红64</i></div>
+    <div class="bar b-new" style="height:74.9%"><span>6.7</span><i>黄64</i></div>
+    <div class="bar b-new" style="height:74.2%"><span>6.7</span><i>黄255</i></div>
+    <div class="bar b-new" style="height:76.8%"><span>6.9</span><i>红255</i></div>
+    <div class="bar b-new" style="height:66.3%"><span>6.0</span><i>绿128</i></div>
+    <div class="bar b-new" style="height:73.8%"><span>6.6</span><i>绿255</i></div>
+    <div class="bar b-new" style="height:73.8%"><span>6.6</span><i>灭复查</i></div>
+    <div class="bar b-new" style="height:77.3%"><span>7.0</span><i>心跳关</i></div>
+    <div class="bar b-new" style="height:87.0%"><span>7.8</span><i>睡眠</i></div>
+  </div>
+  <p class="mut" style="text-align:center;margin-top:22px">
+    偏置（mA，纵轴满格 9 mA）—— 10 个档里 8 个落在 <b>+6.0～+7.0</b>，与负荷电流（2.3→22.5 mA，近 10 倍跨度）几乎无关 ⇒ <b>近似纯加法偏置</b>。
+  </p>
+
+  <div class="hl" style="margin-top:16px">
+    <b>但探针对「起伏负载」的读数还有另一层失真。</b>
+    4G 心跳态电流在 <b>13 ↔ 59 mA</b> 间摆（F-11 中位 58.7、均值 46.1）。
+    探针此时给 51.0 mA —— 既不是典型电平（58.7），也不是平均（46.1）。
+    说明它返回的多半是<b>一小段窗口的平均</b>，而不是瞬时值。
+    所以：<b>稳定负载可以直接用「探针−6.7」还原真值；起伏负载必须用 F-11 的瞬时序列重算中位/均值。</b>
+  </div>
+</div>
+
+<h2>2. 校正方法</h2>
+<div class="card">
+  <ul style="margin-top:0">
+    <li><b>仪器</b>：安服优 F-11 真值电流表（COM4，38400 8N1），串联在被测回路内，~10 Hz 连续记录；探针 <code>power-read</code> 作对照。</li>
+    <li><b>置态</b>：全部用 SWD 直写 RAM/寄存器，<b>不走 MQTT</b>。
+      原因：固件里「收到任何被识别的 MQTT 指令」都会执行 <code>g_low_power = 0; DTU_SetLowPower(0)</code>（<code>main.c:476</code>），
+      用 MQTT 下 LED 命令会把刚设好的低功耗态顺手清掉 —— 这正是 v2 的 LED 那几档读数偏高的隐患。</li>
+    <li><b>校验</b>：每一档置态后<b>回读</b> <code>GPIOA_ODR</code> / <code>TIM3-&gt;CCR1..3</code> / <code>dtu.low_power</code> / <code>g_low_power</code>，
+      与目标值一致才采数（本文所有档位均通过）。</li>
+    <li><b>统计</b>：F-11 去掉首尾 3 s 后取<b>中位</b>（典型电平）与<b>均值</b>（含突发）；探针每档取 12–14 次中位。</li>
+  </ul>
+  <table>
+    <thead><tr><th>状态名</th><th>怎么造出来的</th><th>符号 / 寄存器</th></tr></thead>
+    <tbody>
+      <tr><td>心跳开 / 心跳关</td><td>写 <code>dtu.c</code> 的 static <code>low_power</code></td><td><code>0x20000590</code>（1 = 同时停心跳与探活）</td></tr>
+      <tr><td>只停心跳</td><td>每 2 s 把 <code>hb_tick</code> 写成当前 <code>uwTick</code>（15 s 周期永远到不了）</td><td><code>hb_tick 0x20000584</code>、<code>uwTick 0x20000120</code></td></tr>
+      <tr><td>只停探活</td><td>每 2 s 把 <code>probe_tick</code> 写成当前 <code>uwTick</code></td><td><code>probe_tick 0x20000588</code></td></tr>
+      <tr><td>睡眠态</td><td><code>low_power=1</code> + <code>g_low_power=1</code>（等于 <code>{"cmd":"sleep"}</code> 的效果）</td><td><code>g_low_power 0x20000341</code></td></tr>
+      <tr><td>LED 各色 / 亮度</td><td>直写 TIM3 比较寄存器</td><td><code>CCR1(红) 0x40000434</code>、<code>CCR2(黄) 0x40000438</code>、<code>CCR3(绿) 0x4000043C</code></td></tr>
+      <tr><td>4G 断电</td><td>清 <code>GPIOA_ODR</code> bit3（PA3=0 才是断电）</td><td><code>0x4001080C</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>3. 校正后的绝对值（逐行对照 v2 总表）</h2>
+<div class="card">
+  <table>
+    <thead><tr>
+      <th>#</th><th>状态</th><th class="num">v2 原始<br>（探针中位）</th>
+      <th class="num">探针 −6.7 后</th><th class="num">本次 F-11<br>真值中位</th><th class="num">差</th><th>备注</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>1</td><td>运行态 · 心跳开（对照）</td><td class="num">65.25</td><td class="num">58.6</td>
+          <td class="num"><b>58.7</b></td><td class="num" style="color:var(--green)">+0.1</td>
+          <td>三次独立测量 58.14 / 58.71 / 58.81</td></tr>
+      <tr><td>2</td><td>运行态 · 心跳关</td><td class="num">35.07</td><td class="num">28.4</td>
+          <td class="num"><b>14.3</b></td><td class="num" style="color:var(--red)">−14.1</td>
+          <td>模组空闲电平变了，见 §1 提示</td></tr>
+      <tr><td>3</td><td>红灯 255 · 心跳关</td><td class="num">42.67</td><td class="num">36.0</td>
+          <td class="num"><b>22.4</b></td><td class="num" style="color:var(--red)">−13.6</td>
+          <td>= 14.3 + 8.08（LED 净增见 §4）</td></tr>
+      <tr><td>4</td><td>红灯 64 · 心跳关</td><td class="num">36.47</td><td class="num">29.8</td>
+          <td class="num"><b>16.5</b></td><td class="num" style="color:var(--red)">−13.3</td>
+          <td>= 14.3 + 2.20</td></tr>
+      <tr><td>5</td><td>绿灯 255 · 心跳关</td><td class="num">53.78</td><td class="num">47.1</td>
+          <td class="num"><b>34.5</b></td><td class="num" style="color:var(--red)">−12.6</td>
+          <td>= 14.3 + 20.17</td></tr>
+      <tr><td>6</td><td>黄灯 255 · 心跳关</td><td class="num">42.34</td><td class="num">35.6</td>
+          <td class="num"><b>22.1</b></td><td class="num" style="color:var(--red)">−13.5</td>
+          <td>= 14.3 + 7.81</td></tr>
+      <tr><td>7</td><td>LED 全灭 · 心跳关</td><td class="num">35.32</td><td class="num">28.6</td>
+          <td class="num"><b>14.4</b></td><td class="num" style="color:var(--red)">−14.2</td>
+          <td>≈ 心跳关本身</td></tr>
+      <tr><td>8</td><td>密集收发（心跳抑制失败）</td><td class="num">68.36</td><td class="num">61.7</td>
+          <td class="num mut">未复现</td><td class="num mut">—</td>
+          <td>该档本质是「上行最密」，其量值≈心跳开＋额外上行；无服务器侧刷包环境，本次不做</td></tr>
+      <tr><td>9</td><td>睡眠态（<code>{"cmd":"sleep"}</code>）</td><td class="num">34.29</td><td class="num">27.6</td>
+          <td class="num"><b>13.9</b></td><td class="num" style="color:var(--red)">−13.7</td>
+          <td>13.85 / 13.87 两组一致</td></tr>
+      <tr><td>10</td><td>唤醒后 · 心跳开</td><td class="num">64.82</td><td class="num">58.1</td>
+          <td class="num"><b>≈58.7</b></td><td class="num" style="color:var(--green)">+0.6</td>
+          <td>与 #1 同态</td></tr>
+    </tbody>
+  </table>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--old)"></i>v2 原始（探针中位）</span>
+    <span><i class="dot" style="background:var(--new)"></i>本次 F-11 真值</span>
+  </div>
+  <div class="bars" style="height:200px">
+    <div class="bar b-old" style="height:93.2%"><span>65.3</span><i>心跳开</i></div>
+    <div class="bar b-old" style="height:50.1%"><span>35.1</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:61.0%"><span>42.7</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:52.1%"><span>36.5</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:76.8%"><span>53.8</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:60.5%"><span>42.3</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:50.5%"><span>35.3</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:49.0%"><span>34.3</span><i>睡眠</i></div>
+  </div>
+  <div class="bars" style="height:200px;margin-top:2px;border-bottom:2px solid var(--line)">
+    <div class="bar b-new" style="height:83.9%"><span>58.7</span><i>心跳开</i></div>
+    <div class="bar b-new" style="height:20.4%"><span>14.3</span><i>心跳关</i></div>
+    <div class="bar b-new" style="height:32.0%"><span>22.4</span><i>红255</i></div>
+    <div class="bar b-new" style="height:23.6%"><span>16.5</span><i>红64</i></div>
+    <div class="bar b-new" style="height:49.3%"><span>34.5</span><i>绿255</i></div>
+    <div class="bar b-new" style="height:31.6%"><span>22.1</span><i>黄255</i></div>
+    <div class="bar b-new" style="height:20.6%"><span>14.4</span><i>全灭</i></div>
+    <div class="bar b-new" style="height:19.9%"><span>13.9</span><i>睡眠</i></div>
+  </div>
+  <p class="mut" style="text-align:center;margin-top:20px">
+    上排 = v2 原始探针中位，下排 = 本次 F-11 真值。纵轴满格 70 mA。
+    注意 <b>#1/#10（心跳开）校正后两排几乎等高</b>，而 <b>#2～#7、#9 一致地矮了 13～14 mA</b> —— 两个偏差来源泾渭分明。
+  </p>
+</div>
+
+<h2>4. 相对值复核（差值不受偏置影响，但这次是重测出来的）</h2>
+
+<div class="card">
+  <h3>4.1 心跳 + 探活 = 全场最大的一笔（2×2 拆分）</h3>
+  <p class="mut" style="margin-top:2px">四种组合各自独立置态，每档 45–50 s，F-11 中位；「只停心跳 / 只停探活」用周期改写 <code>hb_tick</code> / <code>probe_tick</code> 实现。</p>
+  <table>
+    <thead><tr><th>条件</th><th class="num">v2 探针中位</th><th class="num">校正后（估）</th>
+      <th class="num">本次 F-11 中位</th><th class="num">本次 F-11 均值</th><th>F-11 σ</th></tr></thead>
+    <tbody>
+      <tr><td>1 心跳 ON · 探活 ON（对照）</td><td class="num">65.31</td><td class="num">58.6</td>
+          <td class="num"><b>58.7</b></td><td class="num">48.2</td><td class="num">20.0</td></tr>
+      <tr><td>2 心跳 ON · 探活 OFF</td><td class="num">65.30</td><td class="num">58.6</td>
+          <td class="num"><b>58.4</b></td><td class="num">45.4</td><td class="num">20.8</td></tr>
+      <tr><td>3 心跳 OFF · 探活 ON</td><td class="num">35.20</td><td class="num">28.5</td>
+          <td class="num"><b>14.9</b></td><td class="num">26.8</td><td class="num">20.2</td></tr>
+      <tr><td>4 心跳 OFF · 探活 OFF</td><td class="num">34.97</td><td class="num">28.3</td>
+          <td class="num"><b>15.0</b></td><td class="num">25.8</td><td class="num">19.4</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>+30 mA 确实全来自 15 s 心跳 —— v2 这条结论成立。</b>
+      心跳 ON→OFF：中位 <b>58.4 → 15.0 = −43.4 mA</b>（v2 记 −30.1）。</li>
+    <li><b>探活对典型电平的边际代价 ≈ 0：</b>心跳开着时 ON→OFF 是 58.7→58.4（<b>+0.3 mA</b>）；心跳关着时 14.9→15.0（<b>−0.1 mA</b>）。与 v2 的 −0.01 mA 一致。</li>
+    <li>四档的 σ 都在 19–21 mA：那 ~20 mA 的起伏不是 STM32 造出来的，是<b>模组自身的 ~90 s 周期突发</b>（约 6 s 冲到 59–75 mA）。心跳关档若把窗口拉长到不含突发，σ 会掉到 1.2 mA（见 <code>corr_B3 / v2rec 第 2 段</code>）。</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>4.2 LED 各色净增（4G 断电稳定基线，最干净的一组）</h3>
+  <p class="mut" style="margin-top:2px">基线 = 4G 断电 + LED 全灭 = <b>2.30 mA</b>；每档回读 CCR 确认（首轮曾因 CCR3 清零写失败，把「绿灯+黄灯」误读成「黄灯」= 40.8 mA，已修正）。</p>
+  <table>
+    <thead><tr><th>LED 档</th><th class="num">v2 净增（探针）</th><th class="num">本次净增（F-11）</th><th class="num">差</th><th class="num">本次绝对值</th></tr></thead>
+    <tbody>
+      <tr><td><b>绿灯 255</b></td><td class="num">+18.6</td><td class="num"><b>+20.2</b></td><td class="num">+1.6</td><td class="num">22.47</td></tr>
+      <tr><td>绿灯 128</td><td class="num mut">—</td><td class="num">+11.1</td><td class="num mut">—</td><td class="num">13.43</td></tr>
+      <tr><td>红灯 255</td><td class="num">+7.5</td><td class="num"><b>+8.1</b></td><td class="num">+0.6</td><td class="num">10.38</td></tr>
+      <tr><td>黄灯 255</td><td class="num">+7.1</td><td class="num"><b>+7.8</b></td><td class="num">+0.7</td><td class="num">10.11</td></tr>
+      <tr><td>红灯 64（25%）</td><td class="num">+1.3</td><td class="num"><b>+2.2</b></td><td class="num">+0.9</td><td class="num">4.50</td></tr>
+      <tr><td>黄灯 64（25%）</td><td class="num mut">—</td><td class="num">+2.2</td><td class="num mut">—</td><td class="num">4.53</td></tr>
+    </tbody>
+  </table>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--old)"></i>v2（探针净增）</span>
+    <span><i class="dot" style="background:var(--new)"></i>本次（F-11 净增）</span>
+  </div>
+  <div class="bars" style="height:150px">
+    <div class="bar b-old" style="height:88.6%"><span>18.6</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:35.7%"><span>7.5</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:33.8%"><span>7.1</span><i>&nbsp;</i></div>
+    <div class="bar b-old" style="height:6.2%"><span>1.3</span><i>&nbsp;</i></div>
+  </div>
+  <div class="bars" style="height:150px;margin-top:2px">
+    <div class="bar b-new" style="height:96.0%"><span>20.2</span><i>绿255</i></div>
+    <div class="bar b-new" style="height:38.5%"><span>8.1</span><i>红255</i></div>
+    <div class="bar b-new" style="height:37.2%"><span>7.8</span><i>黄255</i></div>
+    <div class="bar b-new" style="height:10.5%"><span>2.2</span><i>红64</i></div>
+  </div>
+  <p class="mut" style="text-align:center;margin-top:20px">纵轴满格 21 mA。绿灯最费电（高亮绿光压降高），红灯与黄灯基本同档，25% 亮度几乎不耗 —— <b>v2 这组定性结论完全成立</b>，量值整体上浮 0.6～1.6 mA。</p>
+  <div class="info">
+    <b>亮度是线性的：</b>红灯 64/255（25%）实测 +2.20 mA，恰好是 255 档 8.08 的 27%；绿灯 128（50%）+11.13，是 20.17 的 55%。所以「调暗能省」这条路是线性的，没有阈值效应。
+  </div>
+</div>
+
+<div class="card">
+  <h3>4.3 睡眠态 ≈ 心跳关（v2 结论成立）</h3>
+  <table>
+    <thead><tr><th>对照</th><th class="num">较早一次</th><th class="num">本次</th><th>结论</th></tr></thead>
+    <tbody>
+      <tr><td>心跳关（<code>low_power=1</code>）</td><td class="num">14.25</td><td class="num">14.99</td><td>模组停止被 STM32 唤醒后的空闲电平</td></tr>
+      <tr><td>睡眠态（<code>g_low_power=1</code>，即 <code>{"cmd":"sleep"}</code>）</td><td class="num">13.87</td><td class="num">13.85</td><td>再叠加 MCU 进 Sleep</td></tr>
+      <tr><td><b>差</b></td><td class="num">−0.4</td><td class="num">−1.1</td><td><b>基本相等</b></td></tr>
+    </tbody>
+  </table>
+  <div class="good">
+    <b>「MCU 进 WFI 本身省不出可测的整板电流」——v2 这条结论成立。</b>
+    原因：只 <code>SLEEPDEEP=0</code>（Sleep）时 HSE 与总线照常跑，MCU 本底只有 1～2 mA 量级，淹在 4G 模组的 14 mA 里。
+    真正的大头是 <b>Stop（时钟树停振）</b>：那是另一条路径，实测睡态 <b>0.226 mA</b>（见 <code>docs/lpcycle-power-time-verify.html</code>）。
+  </div>
+</div>
+
+<h2>5. 结论与影响</h2>
+<div class="card">
+  <ul style="margin-top:0">
+    <li><b>引用 v2 的数字时请一律改用本页：</b>绝对值减 6.7 mA 只是第一刀，「心跳关/睡眠/LED」那一族还要再减掉约 14 mA 的模组空闲差。</li>
+    <li><b>省电优先级不变，但收益要重估：</b>
+      ① 心跳/探活是最大一笔 —— 关掉它（进 Stop + 断 4G）能直接落到 <b>0.226 mA</b>，比任何 LED 措施都高两个数量级；
+      ② 绿灯是 LED 里最费电的（+20.2 mA），红灯/黄灯约 +8 mA，25% 亮度几乎免费；
+      ③ 传感器、上拉是 µA 级，不值得动。</li>
+    <li><b>唯一"不能省"的是保活本身：</b>要保持 MQTT 在线就必须让模组保持被唤醒，代价就是这 +43.7 mA 的心跳包 ——
+      这也解释了为什么"常在线"模式整机 ≈ 58 mA，而"定时唤醒 + 断 4G"模式整机平均只有 0.77 mA（2 h 周期）。</li>
+    <li><b>测功耗的规矩（本次新增）：</b>
+      · 绝对电流只有 F-11 能给，探针只能看差值（且仅限同一时段、稳定负载）；
+      · 用 MQTT 下指令会顺手清掉低功耗态，做功耗实验要改用 SWD 直写；
+      · 每档必须回读校验寄存器，否则「写失败」会被静默吞掉（见 §6）。</li>
+  </ul>
+</div>
+
+<h2>6. 复现与操作备忘</h2>
+<div class="card">
+<pre>仪器
+  F-11 真值表：COM4 · 38400 8N1 · 文本「电流µA,电压mV」
+    f11.cmd stream --secs N --csv out.csv --port COM4
+  探针 power-read：usb-6bee5de2ad9b32857ecc1695（COM11）
+    mklink power-read --probe usb-...
+
+关键符号（本轮固件 build/Debug/stm32f103_CubemxCLI_demo0.elf）
+  GPIOA_ODR   0x4001080C   （bit3 = PA3 = 4G 电源，1=上电）
+  TIM3 CCR1/2/3 0x40000434 / 0x40000438 / 0x4000043C  （红 / 黄 / 绿）
+  dtu.low_power  0x20000590      hb_tick    0x20000584
+  g_low_power    0x20000341      probe_tick 0x20000588
+  uwTick         0x20000120      _4g_state  0x200004D0  （14 = READY）</pre>
+  <div class="bad">
+    <b>本轮踩到并已定位的两个坑（都会让实验「静默失败」）：</b>
+    <ol style="margin:6px 0 0">
+      <li><b><code>mklink write-ram</code> 会返回「Write completed but verification differed; operation was not retried」——
+        这行里既没有 <code>error</code> 也没有 <code>fail</code>，脚本若只按关键字判断会当成成功。</b>
+        后果：某档的 <code>hb_tick</code> 其实没写上，心跳没被压住，读数（55.6 mA）被误判成「探活把模组keep住」。
+        加回读校验后重测，该档立刻降到 <b>14.9 mA</b>。<b>规则：写 RAM 必须回读比对。</b></li>
+      <li><b>两个线程同时调 <code>mklink</code>（一个置态、一个采 power-read）会互相抢探针</b>，
+        置态写入大量失败 ⇒ 整轮数据作废（表现为电流一直是上一个状态的值）。<b>规则：置态与采样串行做。</b></li>
+      <li>调试连接偶发整体失联（连 <code>SCB_SCR</code> 都读不到、返回 0 字节）：继电器 power-cycle 一次即可恢复；
+        之后 <code>PA3</code> 可能停在 0（4G 没起来），需要手动把 <code>GPIOA_ODR</code> bit3 拉高。</li>
+    </ol>
+  </div>
+  <p class="mut" style="margin-bottom:0">
+    原始数据：<code>.workbuddy/tmp/f11/corr_A0..A7.csv</code>（LED 阶梯 + 探针成对）、<code>corr2_C0..C3.csv</code>（心跳×探活 2×2）、
+    <code>v2rec_seq.csv</code>（4G 在线连续记录）、<code>led_sweep.csv</code>（首轮，含 CCR3 写失败的反例）；
+    脚本：<code>tmp/swdtool.py</code>、<code>tmp/corr_run.py</code>、<code>tmp/corr2_run.py</code>、<code>tmp/v2rec.py</code>、<code>tmp/ana_v2rec.py</code>。
+  </p>
+</div>
+
+<p class="mut" style="text-align:center;margin:36px 0 10px">
+  车牌 ver2 低功耗项目 · 整板电流实测校正版 · 2026-10-13 ·
+  对照：<code>docs/power-consumption-report-v2.html</code>（原始） · <code>docs/probe-zero-offset.html</code>（零点偏置） ·
+  <code>docs/lpcycle-power-time-verify.html</code>（Stop 0.226 mA / 2 h 平均 0.77 mA）
+</p>
+
+</body>
+</html>

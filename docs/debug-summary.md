@@ -119,3 +119,44 @@ PC 串口（COM10 = 探针的 USB-UART 口 MI_02）当时**没有回显**，未�
   - 不建议低于 500ms：实测丢包窗口约 0.2~0.5s，太短会重新踩进窗口导致 ACK 丢失；
   - 觉得回执慢可微调到 600~700ms，但别低于 500ms。
 
+## 附 C：`v4g` 指令的 ICCID 陷阱 + SWD 写入的两个坑
+
+### C1. `{"cmd":"v4g","state":"off"}` 不带 ICCID 会被静默丢弃
+
+`Core/Src/main.c` 的指令校验里，只有这两个分支豁免 ICCID：
+
+```c
+int is_web_led = ... "\"cmd\":\"led\"";
+int is_sys_cmd = ... "\"cmd\":\"sleep\"";
+uint8_t match = 1;
+if (!is_web_led && !is_sys_cmd && my_iccid[0])
+    match = (strstr((char*)json_buf, my_iccid) != NULL);   /* 否则 match=0 -> 丢弃 */
+```
+
+`v4g` 不在豁免名单里，所以 payload 里必须出现 ICCID。实测（SWD 读 `GPIOA->ODR` bit3 = PA3）：
+
+| payload | PA3 读回 | 结果 |
+|---|---|---|
+| `{"cmd":"v4g","state":"off"}` | 1 | 被丢弃，模组继续供电 |
+| `{"cmd":"v4g","state":"off","id":"<ICCID>"}` | 0 | 生效，4G 断电 |
+
+**修复建议**：把 `v4g` 并进 `is_sys_cmd`（与 `sleep` 同样处理），这样不带 ICCID 也能用。
+
+另注：**4G 断电后不能用 MQTT 发 `v4g on` 恢复**（模组断电收不到命令），只能走 SWD：
+写 `GPIOA->BSRR`（`0x40010810`）= `0x08` 拉高 PA3，模组约 16s 后重新上线。
+
+### C2. `mklink write-ram` 的坑（会让写入静默失效，排查时极易误判）
+
+1. **残留串口 HIL 锁会让所有写操作失败，但读操作照常。**
+   现象：`write-ram` 返回 `Runtime HTTP 500: HIL lock 'transport_usb-serial_COM11' held by pid=NNNN'`，
+   `read-ram` 却完全正常 → 容易误以为"寄存器配置没问题、是硬件不响应"。
+   实例：本轮第一版 4G 断电测试里 4 个 LED 档电流完全一样，真因就是 CCR 压根没写进去。
+   处置：**`mklink resources release-all`**（它清掉的锁显示 `pid=- alive=False`，即已死进程留下的陈旧锁）。
+
+2. **多字节写入会因工具内部回读校验不一致而整体失效。**
+   写 `0xFF 0x00`（2 字节）→ 报 `Write completed but verification differed`，读回仍是 `0000`；
+   改 1 字节 `0xFF` → `status ok / verified true`，读回 `ff00` = 255 ✓。
+   → **逐字节写**。已验证 1 字节写入可靠：`0x40→4000`、`0xC8→c800`、`0x01→0100`、`0xFF→ff00`。
+   （CCR 高字节本来就是 0，亮度 0–255 只需写低字节，所以逐字节写不会丢信息。）
+
+

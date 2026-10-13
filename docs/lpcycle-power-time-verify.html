@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>低功耗指令（lp_cycle）功耗与会校时实测 —— Sleep→Stop 省 2 mA、睡态 0.226 mA、2 h 周期 0.77 mA</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1e2430; --mut:#6b7280; --line:#e5e8ef;
+    --green:#16a34a; --red:#dc2626; --blue:#2563eb; --purple:#7c3aed; --amber:#d97706;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 4vw;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.65}
+  h1{font-size:25px;margin:0 0 6px;letter-spacing:.2px}
+  h2{font-size:18px;margin:34px 0 12px;border-left:4px solid var(--blue);padding-left:11px}
+  h3{font-size:15px;margin:18px 0 8px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(166px,1fr));gap:12px;margin:14px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .lab{font-size:12px;color:var(--mut)}
+  .kpi .val{font-size:23px;font-weight:700;margin-top:3px}
+  .kpi .val small{font-size:12.5px;font-weight:400;color:var(--mut)}
+  .good{border-left:4px solid var(--green);background:#f0fdf4;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .bad{border-left:4px solid var(--red);background:#fef2f2;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .hl{border-left:4px solid var(--amber);background:#fffbeb;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .info{border-left:4px solid var(--blue);background:#eff6ff;border-radius:8px;padding:12px 15px;margin:11px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  td.num{font-variant-numeric:tabular-nums;text-align:right}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.6px;
+       font-family:"Cascadia Code",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.6px;line-height:1.55}
+  .mut{color:var(--mut);font-size:12.5px}
+  .flowwrap{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 6px 14px;text-align:center}
+  svg{max-width:100%;height:auto}
+  /* 纯 CSS 电流柱 */
+  .bars{display:flex;align-items:flex-end;gap:4px;height:170px;margin:16px 0 4px;padding:0 6px;
+        border-bottom:2px solid var(--line)}
+  .bar{flex:1;position:relative;border-radius:4px 4px 0 0;min-width:10px}
+  .bar span{position:absolute;top:-17px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--mut);white-space:nowrap}
+  .bar i{position:absolute;bottom:-19px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--mut);white-space:nowrap;font-style:normal}
+  .b-sleep{background:#86efac}
+  .b-sess{background:#fca5a5}
+  .legend{display:flex;gap:18px;font-size:12.5px;color:var(--mut);margin:26px 0 2px;justify-content:center}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+</style>
+</head>
+<body>
+
+<h1>低功耗指令（lp_cycle）功耗实测 + RTC 校时验证</h1>
+<div class="sub">2026-10-13 · 车牌 ver2 · STM32F103 @8 MHz + 银尔达 DTU · F-11 真值表（COM4）+ SWD 状态/寄存器抓取 + 分层剥离实测 + 642 s 纯净浸泡 · 测量时周期临时设 60 s 以便快速累积多轮</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="lab">Run（8 MHz，4G 断）</div><div class="val">2.38 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">Sleep（旧 g_low_power 模式）</div><div class="val" style="color:var(--amber)">2.22 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">Stop（lp_cycle 真睡眠）</div><div class="val" style="color:var(--green)">0.226 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">换算差（Sleep→Stop）</div><div class="val" style="color:var(--green)">−1.99 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">RTC 与墙钟误差</div><div class="val" style="color:var(--green)">0–2 <small>s</small></div></div>
+  <div class="kpi"><div class="lab">整机平均（2 h 上报）</div><div class="val" style="color:var(--green)">0.77 <small>mA</small></div></div>
+</div>
+
+<h2>0. 结论先说</h2>
+<div class="card">
+  <div class="good">
+    <b>① 低功耗指令有效且稳定。</b>睡态实测 <b>0.226 mA</b>（六组独立采集一致落在 0.220–0.229 mA），4G 已断电、会话结束自动再睡；每轮「睡 ↔ 会话 ~90.6 s」精确复现，多轮零人工干预。<b>折算到 2 h 上报间隔，整机平均电流 <span style="color:var(--green)">0.77 mA</span>，已在 1 mA 以内。</b>
+  </div>
+  <div class="good">
+    <b>② 校时链路已打通。</b>每轮会话收尾用 DTU 的 <code>config,get,nettime</code> 对表 —— 第 2 轮结尾首次成功，第 3、4 轮实测 RTC 与 PC 墙钟误差稳定在 <b>1–2 s</b>、浸泡后复查更读到 <b>0 s</b>（此前 RTC 只数「开机秒数」，第 1、2 轮读数 58→215 即为佐证）。
+  </div>
+  <div class="bad">
+    <b>③ 但顺带挖出并修复了一个把会话掐断的真 bug。</b>首轮实测会话只有 <b>13.7 s</b>（代码设定 90 s），根因是 <code>uint32</code> 下溢（下行 §4）。它连锁导致 4G 来不及注网、报告发不出、<code>nettime</code> 授时必然失败 —— 修完三项一起恢复正常。
+  </div>
+  <div class="hl">
+    <b>④ 两个预设被实验修正：</b>（a）历史上记的睡态 1.0 mA「是 DBG_STOP 保活调试域所致」——<b>已用对照实验否证</b>，两组只差 1 µA（§2）；（b）更重要的是，<b>之前那个 2.3 mA 档根本不是 Stop 而是 Sleep</b>，本次分层实测把 3.47→0.226 mA 的账拆清了（§1）；（c）测试期间那次非预期复位（<code>PORRSTF+PINRSTF</code>）——10 分钟纯净浸泡后 <code>RCC_CSR=0x00000000</code>、零复位，判为<b>测试台架噪声，产品路径无风险</b>（§6）。
+  </div>
+</div>
+
+<h2>1. 为什么能从 2.3 mA 降到 0.226 mA —— Run / Sleep / Stop 分层实测</h2>
+<div class="card">
+  <div class="hl">
+    <b>结论先给：降下来的功劳不是 4G 模组，而是 MCU 从「Sleep」换成了「真 Stop」。</b>
+    此前记录的 2.31 mA 那一档，其实<b>根本没进 Stop，只进了 Sleep</b>（Cortex-M3 的 Sleep 只停内核时钟，外设时钟和振荡器照跑）。
+    4G 模组在三个测量点上<b>都是 <code>V4G_Set(0)</code> 断主电</b>的状态，不参与这 2 mA 的差别。
+  </div>
+
+  <h3>三点剥离实测（同一块板、同一台 F-11、同日 13:44–13:48）</h3>
+  <table>
+    <tr><th style="width:30%">状态</th><th>电流（F-11）</th><th>怎么造出来的</th><th>判据</th></tr>
+    <tr>
+      <td><b>Run</b><br><span class="mut">8 MHz，4G 断电</span></td>
+      <td class="num">2.38 mA<br><span class="mut">中位</span></td>
+      <td>关掉 <code>lp_cycle</code>，SWD 手动清 <code>GPIOA_ODR</code> bit3（<code>PA3=0</code>）</td>
+      <td class="mut">SWD 全可读；主循环每 1 ms 被 SysTick 唤醒一圈（固件本身就是 WFI 待机）</td>
+    </tr>
+    <tr>
+      <td><b>Sleep</b><br><span class="mut">= 旧 <code>g_low_power</code> 模式</span></td>
+      <td class="num">2.22 mA<br><span class="mut">716 样本，2.092–2.284</span></td>
+      <td>写 <code>g_low_power=1</code> 且 <code>lp_cycle=0</code><br>→ <code>SLEEPDEEP=0</code>，<code>HAL_SuspendTick()</code></td>
+      <td class="mut">外设寄存器<b>全部可读</b>（<code>RCC_CR=0x35780</code>）；曲线零尖刺、极稳</td>
+    </tr>
+    <tr style="background:#f0fdf4">
+      <td><b>Stop</b><br><span class="mut">= 本次 <code>lp_cycle</code></span></td>
+      <td class="num" style="color:var(--green)"><b>0.226 mA</b></td>
+      <td>写 <code>lp_cycle=1, s_lp_state=2</code> → 收尾 → 挂 RTC 闹钟 → <code>SLEEPDEEP=1</code></td>
+      <td class="mut">外设寄存器<b>整片读不到</b>（<code>None</code>，Stop 指纹）；只有 RTC/LSE 在跑</td>
+    </tr>
+  </table>
+
+  <div class="bars" style="height:150px">
+    <div class="bar" style="height:100%;background:#fca5a5"><span>2.38</span><i>Run</i></div>
+    <div class="bar" style="height:93%;background:#fbbf24"><span>2.22</span><i>Sleep</i></div>
+    <div class="bar" style="height:9.5%;background:#4ade80"><span>0.226</span><i>Stop</i></div>
+  </div>
+  <p class="mut" style="text-align:center;margin-top:26px">柱高按电流等比（单位 mA）。Run ↔ Sleep 几乎一样高，Sleep → Stop 才是悬崖。</p>
+
+  <h3>3.47 mA → 0.226 mA 的账，一分不差地拆成三份</h3>
+  <table>
+    <tr><th style="width:34%">省下来的环节</th><th>省了多少</th><th>怎么算出来的</th></tr>
+    <tr>
+      <td><b>LEDB2 蓝灯常亮</b>（R24 510 Ω 跨 VCC33）</td>
+      <td class="num">≈ 1.1 mA</td>
+      <td>历史 Run 3.47 mA（灯亮）− 本次 Run 2.38 mA（灯已拆）= 1.09 mA</td>
+    </tr>
+    <tr>
+      <td><b>MCU 从 Sleep → Stop</b>（时钟树停振）</td>
+      <td class="num" style="color:var(--green)"><b>≈ 2.0 mA</b></td>
+      <td>本次 Sleep 2.22 mA − 本次 Stop 0.226 mA = 1.99 mA <b>← 大头</b></td>
+    </tr>
+    <tr>
+      <td>MCU 从 Run → Sleep（只停内核时钟）</td>
+      <td class="num">≈ 0.16 mA</td>
+      <td>本次 Run 2.38 mA − 本次 Sleep 2.22 mA（<b>很小</b>，因为固件主循环本来就在 WFI 待机）</td>
+    </tr>
+    <tr style="background:#eff6ff">
+      <td><b>合计</b></td><td class="num"><b>≈ 3.24 mA</b></td><td>3.47 − 0.226 = 3.24 ✓</td>
+    </tr>
+  </table>
+
+  <h3>为什么 Stop 能一口气省 2 mA？</h3>
+  <table>
+    <tr><th style="width:22%">模式</th><th>时钟树</th><th>典型电流（F103 @8 MHz）</th></tr>
+    <tr><td><b>Run</b></td><td>HSE 8 MHz + PLL off，AHB/APB 全开</td><td class="num">~2.4 mA</td></tr>
+    <tr><td><b>Sleep</b>（<code>SLEEPDEEP=0</code>）</td><td><b>内核时钟停，但 HSE 振荡器和 AHB/APB 总线照常跑</b>——外设寄存器随时可读</td><td class="num">~2.2 mA</td></tr>
+    <tr><td><b>Stop</b>（<code>SLEEPDEEP=1</code>）</td><td><b>整个时钟树停振</b>（HSE 关、HSI 关），只留 LSE 32.768 kHz 给 RTC</td><td class="num" style="color:var(--green)">~0.02 mA（+板上 LDO 静态与漏电 ≈0.2 mA）</td></tr>
+  </table>
+  <div class="info">
+    <b>直观理解：</b>Sleep 只是「CPU 打个盹」，8 MHz 那套时钟还在全速空转，总线、Flash 接口、外设时钟一个没停 —— 所以电流几乎没降。
+    Stop 是「把整个时钟系统关掉」，MCU 本体瞬间掉到几十 µA，剩下的 0.2 mA 主要是板上 LDO 静态电流、SC7A20H 漏电和 4G 断电路径的漏电。
+    <br><b>所以「整机从 2.3 mA 变 0.22 mA」真正的开关是 <code>SCB_SCR</code> 的 <code>SLEEPDEEP</code> 位</b>：老代码的 <code>g_low_power</code> 路径没置它（因为那个模式依赖 UART 唤醒，进 Stop 就收不到 UART 了，属于设计取舍），<code>lp_cycle</code> 才第一次真正把它置起来。
+  </div>
+  <div class="bad">
+    <b>⚠ 顺带纠正一个历史误判：</b>之前记录的「<code>4G 断 + Stop = 2.31 mA</code>」并不是 Stop，而是 Sleep ——
+    本次实测 Sleep = <b>2.22 mA</b>，与 2.31 只差 0.09 mA（可归因于当时 LEDB2 状态或换挡噪声）。
+    当时用 SWD 手写 <code>SCB_SCR=0x04</code> 想手动进 Stop，但固件主循环<b>每一圈都会重写这个位</b>
+    （<code>main.c</code>：<code>if (lp_stop) SCR |= SLEEPDEEP; else SCR &= ~SLEEPDEEP;</code>），
+    非 lp_cycle 睡眠态下 lp_stop=0 → 手写的 SLEEPDEEP 下一圈就被清掉，于是<b>永远停在 Sleep</b>。
+  </div>
+</div>
+
+<h2>2. 睡态 0.226 mA 的可信度：六组独立采集一致</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:40%">采集（全部 F-11 真值）</th><th>睡态电流</th><th>说明</th></tr>
+    <tr><td>13:16 <code>lpcycle_fixed.csv</code>（修复后）</td><td class="num" style="color:var(--green)"><b>0.226 mA</b></td><td>57 个纯睡块，块均值中位 <b>0.234</b></td></tr>
+    <tr><td>12:49 <code>lpcycle_rerun.csv</code>（<b>修复前</b>）</td><td class="num" style="color:var(--green)">0.222 mA</td><td>146 个纯睡块，中位 0.222</td></tr>
+    <tr><td>12:38 <code>lpcycle_verify.csv</code>（<b>修复前</b>）</td><td class="num" style="color:var(--green)">0.229 mA</td><td>36 个纯睡块，中位 0.222</td></tr>
+    <tr><td>13:19 <code>dbgstop_test.csv</code>（对照 A 组）</td><td class="num" style="color:var(--green)">0.221 mA</td><td>21 个纯睡块</td></tr>
+    <tr><td>13:25 <code>dbgstop_A.csv</code>（对照 B 组）</td><td class="num" style="color:var(--green)">0.222 mA</td><td>5 个纯睡块</td></tr>
+    <tr><td>13:37 <code>soak.csv</code>（642 s 纯净浸泡）</td><td class="num" style="color:var(--green)">0.2204 mA</td><td>68 个纯睡块，4 段各恰好 58 s</td></tr>
+    <tr><td>历史记录（10-13 凌晨，lp_cycle 初版）</td><td class="num" style="color:var(--red)">1.03 – 1.07 mA</td><td><b>未能复现</b>（见下）</td></tr>
+  </table>
+
+  <div class="bad" style="margin-top:12px">
+    <b>「DBG_STOP 保活调试域导致偏高」这个假设已被对照实验否证。</b>为验证它，在 <b>13:19 与 13:25</b> 做了两组对照采集（<code>dbgstop_test.csv</code> / <code>dbgstop_A.csv</code>，同一固件、同一硬件、间隔 6 分钟，两组仅 SWD 保活调试域的设置不同）。结果睡态分别给出 <b>0.221 / 0.222 mA</b> —— <b>差异 1 µA</b>，远小于预期中的「几百 µA ~ 1 mA」。<br>
+    加上 12:38 / 12:49 两组（同为 0.222–0.229 mA），<b>共六组数据一致，没有任何一组复现出 ~1 mA</b>。因此这个假设不成立。
+  </div>
+
+  <div class="hl">
+    <b>那 1.0 mA 那组怎么解释？</b>结合 §1 的三点实测，最合理的解释是：那几次「自认为在 Stop」的测量<b>其实停在 Sleep，且当时还叠着别的负载</b>。判据：<br>
+    ① 本次六组跨越 12:38–13:37、覆盖修复前后两种固件，读数一致收敛在 0.220–0.229 mA，<b>方差仅 ±4 µA</b>；<br>
+    ② 1.05 mA ≈ 本次睡态 0.226 mA + 早期 LEDB2 常亮回路 ≈0.8 mA，算术吻合「蓝灯还亮着」；<br>
+    ③ 早期同时段还记录过 1.162 mA、1.94 mA（清 SLEEPDEEP 后的中间态）——都落在「0.22 mA 本底 + 某个未关闭负载」的区间里，指向<b>测量时状态不纯</b>。
+  </div>
+
+  <div class="info">
+    <b>为什么 0.22 mA 可信：</b>STM32F103 Stop + LSE 约 15–25 µA，SC7A20H 低功耗态几 µA，剩下的主要是板上 LDO 静态电流与 4G 模组断电路径的漏电。R24/LEDB2 这条 ~1.1 mA 通路已确认关闭（由 §1 的 Run 对比反推），0.2 mA 量级正是「该省都省了」的结果。<br>
+    <b>旁证：</b>同一张表在 <b>4G 上电的会话窗</b>读 58.4 mA、<b>4G 断电的 Run 态</b>读 2.38 mA、**真 Stop** 读 0.226 mA —— 三条量级互不矛盾，说明低量程这一档没有系统性增益误差。
+  </div>
+</div>
+
+<h2>3. 一整轮的电流形态（F-11 真值）</h2>
+<div class="card">
+  <div class="bars">
+    <div class="bar b-sleep" style="height:2%"><span>0.22</span><i>睡</i></div>
+    <div class="bar b-sess"  style="height:96%"><span>58.6</span><i>会话</i></div>
+    <div class="bar b-sleep" style="height:2%"><span>0.22</span><i>睡</i></div>
+    <div class="bar b-sess"  style="height:96%"><span>58.4</span><i>会话</i></div>
+    <div class="bar b-sleep" style="height:2%"><span>0.22</span><i>睡</i></div>
+    <div class="bar b-sess"  style="height:95%"><span>59.1</span><i>会话</i></div>
+    <div class="bar b-sleep" style="height:2%"><span>0.22</span><i>睡</i></div>
+  </div>
+  <div class="legend">
+    <span><i class="dot b-sleep"></i>Stop 睡眠（4G 断电）</span>
+    <span><i class="dot b-sess"></i>会话（4G 上电 / 注网 / MQTT）</span>
+  </div>
+  <p class="mut" style="text-align:center">柱高为电流量级的示意（单位 mA）；实际为 0.22 ↔ 58.6 的方波，整周期 ≈155 s（period=60 s 时；睡 58–63 s / 醒 94–96 s）</p>
+
+  <h3>会话内部的电流细节（判据）</h3>
+  <table>
+    <tr><th style="width:34%">观察</th><th>含义</th></tr>
+    <tr><td>会话中最小电流出现 <b>12.7 – 13.0 mA</b> 的周期性低谷</td><td>4G 模组的 <b>DRX 睡眠谷</b> → 模组<b>已注册上网络</b>并进入空闲监听</td></tr>
+    <tr><td>修复前：会话内最低仅 ~55 mA、无低谷</td><td>模组一直在搜网/注册，<b>从未注册成功</b>（会话被掐断的后果）</td></tr>
+    <tr><td>上电瞬间记录到约 <b>1.2 A</b> 的尖峰</td><td>4G 模组开机浪涌（对供电裕量是个提醒，见 §6）</td></tr>
+  </table>
+
+  <h3>按周期折算的平均电流</h3>
+  <div class="hl">
+    <b>先纠正一个口径问题：指令里的 <code>period_min</code> 其实是「睡眠时长」，不是「上报周期」。</b><br>
+    证据在 <code>LP_CloseAndSleep()</code>：闹钟是在<b>收尾序列的最末尾</b>才挂的 ——
+    <code>+++ → nettime 对表 → AT+ENTM → RTC_APP_ArmIn(g_lp_period_s) → V4G_Set(0) → Stop</code>。
+    所以闹钟从「收尾结束的那一刻」起数 <code>period</code> 秒，<b>两次上报的真实间隔 = period + 会话 90.6 s + 收尾 4.1 s ≈ period + 95 s</b>。<br>
+    实测印证（两条独立证据吻合）：<code>period_min=60</code> 时 —— ① F-11 电流曲线里三个完整循环都是「睡 ~63 s ↔ 醒 ~96 s」、整周期 ≈155 s；② SWD 状态抓取里 <code>state=2→1</code> 的间隔为 60 / 61 / 61 s、<code>state=1→2</code> 为 94 s（§5）。
+  </div>
+  <p class="mut">
+    折算公式（口径 = 固件真实行为）：<code>I_avg = (period × 0.226 mA + 4840 mA·s) / (period + 94.7 s)</code><br>
+    其中 <b>4840 mA·s</b> 是实测每轮醒窗的电荷量（96 s 窗 × 50.4 mA），睡态取 0.226 mA。
+  </p>
+  <table>
+    <tr><th>指令 <code>period_min</code></th><th>真实上报间隔</th><th>醒窗占比</th><th>整机平均电流</th></tr>
+    <tr><td>1 min</td><td>155 s</td><td class="num">61.2%</td><td class="num">≈ 25.6 mA</td></tr>
+    <tr><td>2 min</td><td>215 s</td><td class="num">44.1%</td><td class="num">≈ 18.5 mA</td></tr>
+    <tr><td>5 min</td><td>395 s</td><td class="num">24.0%</td><td class="num">≈ 10.2 mA</td></tr>
+    <tr><td>10 min</td><td>695 s</td><td class="num">13.6%</td><td class="num">≈ 5.89 mA</td></tr>
+    <tr><td>30 min</td><td>1895 s</td><td class="num">5.0%</td><td class="num">≈ 2.30 mA</td></tr>
+    <tr><td>60 min</td><td>3695 s</td><td class="num">2.56%</td><td class="num">≈ 1.29 mA</td></tr>
+    <tr><td><b>120 min</b></td><td>7295 s</td><td class="num">1.30%</td><td class="num" style="color:var(--green)"><b>≈ 0.77 mA</b></td></tr>
+    <tr><td>360 min</td><td>21695 s</td><td class="num">0.44%</td><td class="num" style="color:var(--green)">≈ 0.41 mA</td></tr>
+  </table>
+  <div class="good">
+    <b>按「period 就是上报周期」这个直觉口径</b>（若把 <code>period_min</code> 当整周期理解）：<b>2 h → 0.90 mA、1 h → 1.56 mA</b>。<br>
+    两种口径都在 1 mA 以内，因此<b>结论对口径不敏感</b>：把上报周期放到 2 h，整机平均电流就是 <b>0.8–0.9 mA</b>。
+  </div>
+  <div class="hl">
+    <b>折算里几乎全是会话窗贡献的。</b>以 2 h 周期为例：睡态 7295 s 只贡献 1650 mA·s，醒窗 96 s 却贡献 4840 mA·s —— <b>醒窗电荷占 75%</b>。所以<b>缩短会话是收益最高的一招</b>：会话从 90.6 s 压到 60 s（4G「连上即收」）可让 2 h 周期的平均电流从 0.77 再降到 ~0.63 mA。<br>
+    <b>建议顺手统一语义：</b>把收尾里的 <code>RTC_APP_ArmIn(g_lp_period_s)</code> 改成 <code>ArmIn(g_lp_period_s &gt; 95 ? g_lp_period_s − 95 : 1)</code>，<code>period_min</code> 才真正等于「上报周期」。
+  </div>
+</div>
+
+<h2>4. 修复：会话被「瞬间掐断」的 uint32 下溢</h2>
+<div class="card">
+  <h3>症状</h3>
+  <p>修复前实测：唤醒后 <b>13.7 s</b> 就进收尾，而代码里 <code>LP_SESSION_MS = 90000</code>（90 s）。连锁后果：4G 模组启动需要 20–60 s，<b>永远来不及注网</b> → MQTT 报告发不出、<code>nettime</code> 授时必然拿不到应答 → RTC 只数开机秒数。</p>
+
+  <h3>根因</h3>
+  <pre>__WFI();                                  // Stop 期间 SysTick 被挂起
+uint32_t now = HAL_GetTick();             // ← 取到的是「睡眠前的冻结值」
+
+if (g_rtc_alarm_hit) {                    // 被 RTC 闹钟唤醒
+    HAL_ResumeTick();
+    SystemClock_Config();                 // 这几步耗时几毫秒
+    V4G_Set(1);
+    s_lp_t0 = HAL_GetTick();              // ← 已比上面的 now 大几毫秒
+    s_lp_state = 1;
+}
+...
+if (g_lp_cycle &amp;&amp; s_lp_state == 1) {
+    uint32_t t_in = now - s_lp_t0;        // ← 负数！uint32 下溢 → 0xFFFFFFxx
+    if (t_in &gt;= LP_SESSION_MS)            // 0xFFFFFFxx ≥ 90000 → 立即成立
+        s_lp_state = 2;                   // 会话第一圈就被判超时
+}</pre>
+  <div class="bad">
+    <b>实质：</b>「同一圈里 <code>now</code> 是睡眠中的冻结值，而 <code>s_lp_t0</code> 是几毫秒之后的新值」，两者相减为负，在无符号运算里变成约 42.9 亿 —— 远大于 90000，于是会话在第一圈就被判超时。
+  </div>
+
+  <h3>修复（两处，均在 <code>Core/Src/main.c</code>）</h3>
+  <ol>
+    <li>唤醒处理块末尾刷新时基：<code>now = HAL_GetTick();</code>（供本圈剩余逻辑：会话计时 / DTU / ACK / SC7 使用）；</li>
+    <li>会话推进处直接现读：<code>uint32_t t_in = HAL_GetTick() - s_lp_t0;</code>（不再依赖本圈开头的 <code>now</code>）。</li>
+  </ol>
+
+  <h3>修复前后对比（同一套硬件、同一观察手段）</h3>
+  <table>
+    <tr><th style="width:34%">指标</th><th>修复前</th><th>修复后</th></tr>
+    <tr><td>会话时长（<code>t_in</code> 到收尾）</td><td style="color:var(--red)">13.7 s</td><td style="color:var(--green)"><b>90.6 s / 91.2 s</b></td></tr>
+    <tr><td>4G 状态机</td><td>卡在 11（POLL_SSTA），<b>不到 14（READY）</b></td><td style="color:var(--green)"><b>到 14（READY）</b></td></tr>
+    <tr><td>会话内电流形态</td><td>平坦 ~60 mA（一直在搜网）</td><td style="color:var(--green)">含 12.7 mA DRX 谷（已注册）</td></tr>
+    <tr><td>RTC（<code>nettime</code> 授时）</td><td style="color:var(--red)">仍是开机秒数</td><td style="color:var(--green)"><b>真实 Unix 时间，误差 0–2 s</b></td></tr>
+  </table>
+  <div class="hl">
+    这个 bug 也解释了 10-13 早些时候「<code>nettime</code> 好像不可用、会卡通道」的误判：命令本身没问题（PC 直连 0.15 s 秒回），是<b>会话被掐断导致根本走不到授时那一步</b>。
+  </div>
+</div>
+
+<h2>5. 校时（时间校准）验证</h2>
+<div class="card">
+  <p>授时链路：每轮会话收尾时 <code>+++</code> 进 DTU 指令模式 → <code>config,get,nettime</code> → 解析「年,月,日,时,分,秒」→ 减 8 h 换算 UTC → 写入 STM32 RTC（LSE 32.768 kHz）→ <code>AT+ENTM</code> 回透传。</p>
+  <p class="mut">证据来自 SWD 连续抓取（<code>tmp/f11/verify_fix.log</code>，每秒一行 <code>wall,state,uwTick,s_lp_t0,t_in,reported,alarm_hit,_4g_state,PA3,rtc_cnt,err</code>；睡态读回 <code>NA</code> 是 SWD 失联的正常指纹）。</p>
+  <table>
+    <tr><th style="width:26%">时刻</th><th>RTC 计数 <code>rtc_cnt</code></th><th>PC 墙钟</th><th>误差</th><th>判读</th></tr>
+    <tr><td>第 1 轮会话（开机~60 s）</td><td class="num">58</td><td class="num">1791868079</td><td>—</td><td class="mut">RTC 从 0 开始数「开机秒数」</td></tr>
+    <tr><td>第 2 轮会话</td><td class="num">124 → 215</td><td class="num">1791868144 → 1791868238</td><td>—</td><td class="mut">仍数开机秒数；本轮<b>收尾</b>首次成功授时</td></tr>
+    <tr><td>第 3 轮会话</td><td class="num">1791868297 → 1791868390</td><td class="num">1791868299 → 1791868392</td><td class="num" style="color:var(--green)"><b>1 – 2 s</b></td><td class="mut">已是<b>真实 Unix 时间</b></td></tr>
+    <tr><td>第 4 轮会话</td><td class="num">1791868452 → 1791868537</td><td class="num">1791868453 → 1791868539</td><td class="num" style="color:var(--green)"><b>1 – 2 s</b></td><td class="mut">保持稳定，未漂移</td></tr>
+    <tr><td>浸泡实验结束时（<code>post_soak_check</code>）</td><td class="num">1791869866</td><td class="num">1791869866</td><td class="num" style="color:var(--green)"><b>0 s</b></td><td class="mut">读数与 PC 同一秒</td></tr>
+  </table>
+  <div class="good">RTC 从「数开机秒数」变成真实 Unix 时间，误差 <b>0–2 s</b>，且后续轮次稳定保持。定时唤醒本身用<strong>相对闹钟</strong>（<code>CNT + period</code>），即使某轮授时失败也不影响循环。</div>
+
+  <h3>顺带验证：<code>period</code> 确实是睡眠时长</h3>
+  <table>
+    <tr><th>轮次边界（wall）</th><th>状态</th><th>间隔</th><th>含义</th></tr>
+    <tr><td>1791868084 → 1791868144</td><td><code>state=2</code> → <code>state=1</code></td><td class="num"><b>60 s</b></td><td>睡 → 醒</td></tr>
+    <tr><td>1791868238 → 1791868299</td><td><code>state=2</code> → <code>state=1</code></td><td class="num"><b>61 s</b></td><td>睡 → 醒</td></tr>
+    <tr><td>1791868392 → 1791868453</td><td><code>state=2</code> → <code>state=1</code></td><td class="num"><b>61 s</b></td><td>睡 → 醒</td></tr>
+    <tr><td>1791868144 → 1791868238</td><td><code>state=1</code> → <code>state=2</code></td><td class="num">94 s</td><td>会话 + 收尾</td></tr>
+  </table>
+  <div class="info">
+    下发的 <code>period_min=60</code> 对应实测睡眠 <b>60–61 s</b>，而整周期 = 61 + 94 = <b>155 s</b> —— 与 F-11 电流曲线测得的「睡 63 s ↔ 醒 96 s、整周期 155 s」<b>两条独立证据完全吻合</b>，确证 <code>period</code> 是睡眠时长而非上报周期（见 §3 口径说明）。
+  </div>
+
+  <h3>一个容易踩的细节：<code>uwTick</code> 在睡眠期是冻结的</h3>
+  <p class="mut">
+    实测：一次 60 s 的睡眠里墙钟走了 65 s，而 <code>uwTick</code> 只涨了 4.7 s —— 因为进 Stop 前调了 <code>HAL_SuspendTick()</code>。
+    这正是 §4 那个 uint32 下溢 bug 的土壤：<b>任何「唤醒后立刻用 <code>HAL_GetTick()</code> 相减」的代码都要当心本圈取到的 <code>now</code> 还是睡眠前的冻结值。</b>
+    这也是为什么修复选择了「在唤醒块末尾显式刷新 <code>now</code>」+「会话推进处现读」双保险。
+  </p>
+  <p class="mut">附：DTU 侧 <code>ntptime</code> 已通过 PC 直连设为 1（每小时 NTP 对时并持久化），因此 <code>nettime</code> 读到的是 NTP 校准后的时间，而非纯基站时间。</p>
+</div>
+
+<h2>6. 那次「非预期复位」已定位：测试台架引入，产品路径无风险</h2>
+<div class="card">
+  <h3>现象（测试中偶发一次）</h3>
+  <table>
+    <tr><th style="width:34%">证据</th><th>读数 / 含义</th></tr>
+    <tr><td><code>RCC_CSR</code> 复位标志</td><td><code>0x0C00000C</code> → <b>PORRSTF（掉电复位）+ PINRSTF（NRST 引脚复位）</b></td></tr>
+    <tr><td><code>DBGMCU_CR</code></td><td>被清回 0（调试域随掉电复位初始化）</td></tr>
+    <tr><td><code>g_lp_cycle / s_lp_state</code></td><td>回到 0 —— RAM 被重新初始化</td></tr>
+  </table>
+
+  <h3>定位实验：10 分钟「纯 F-11 浸泡」</h3>
+  <p class="mut">
+    处置：清空复位标志 → 重新注入 <code>lp_cycle(period=60 s)</code> → 然后<b>全程不碰探针</b>，只用 F-11 连续采集 <b>642 s</b>（<code>tmp/f11/soak.csv</code>，6417 个样本）。
+  </p>
+  <table>
+    <tr><th style="width:34%">判据</th><th>结果</th></tr>
+    <tr><td>F-11 曲线形态</td><td class="num" style="color:var(--green)">4 个完整睡眠段，每段<b>恰好 58 s</b>；5 个会话窗（72 / 96 / 99 / 96 / 48 s，首尾为采集边界截断）</td></tr>
+    <tr><td>死区 / 异常中间态</td><td class="num" style="color:var(--green)">0 个（无「掉到 0」、无 2–10 mA 悬浮段）</td></tr>
+    <tr><td>睡态电流</td><td class="num">中位 <b>0.2204 mA</b>，范围 0.219–1.002 mA</td></tr>
+    <tr><td><b><code>RCC_CSR</code>（浸泡后复查）</b></td><td class="num" style="color:var(--green)"><b>0x00000000 —— 期间未发生任何复位</b></td></tr>
+    <tr><td><code>g_lp_cycle / s_lp_state</code></td><td><code>cyc=1 / state=1</code> —— 循环仍在正常运行，RAM 未被重启</td></tr>
+    <tr><td><code>_4g_state</code></td><td class="num">14 = <b>READY</b></td></tr>
+    <tr><td>RTC 与墙钟</td><td class="num" style="color:var(--green)">误差 <b>0 s</b></td></tr>
+  </table>
+
+  <div class="good">
+    <b>结论：那是一次台架噪声，不是固件问题。</b>642 s / 4 个完整循环里复位标志全程为 0，说明固件自身的唤醒—会话—收尾—再睡链路稳定；之前的复位只出现在「同时开着探针 + F-11」的采集里。
+  </div>
+  <h3>两个候选来源（均为测试台架相关）</h3>
+  <ul>
+    <li><b>F-11 自动换挡继电器</b>：电流在 0.22 mA ↔ 59 mA 之间跳变时，F-11 靠继电器切换量程，切换瞬间可能短时断开被测回路 → 供电跌落 → 掉电复位。会话里记录到的<b>约 1.2 A 开机浪涌</b>也会加剧这一点。</li>
+    <li><b>调试器 connect-under-reset</b>：目标在深度 Stop 时 SWD 失联（固件未使能 DBG_STOP），调试器为恢复连接可能拉低 NRST → 引脚复位。</li>
+  </ul>
+  <div class="info">
+    <b>对产品的影响：无。</b>两个来源都需要「外接电流表 + 调试器」才成立。真机上既没有换挡继电器，也没有常驻的调试器。<br>
+    <b>但仍建议顺手加固：</b>4G 模组上电瞬间的 ~1.2 A 浪涌对供电裕量不友好，建议在模组 VCC 就近放一颗大容量电容（如 470 µF）或加软启动，避免弱供电场景下（如太阳能板阴天）被浪涌拉垮导致掉电复位。
+  </div>
+</div>
+
+<h2>7. 复现与操作备忘</h2>
+<div class="card">
+  <pre>开：MQTT 下发  {"cmd":"lp_cycle","period_min":60}
+关：MQTT 下发  {"cmd":"lp_cycle_off"}      （或 SWD 写 g_lp_cycle=0 / s_lp_state=0）
+
+⚠ period_min 是「睡多久」，不是「多久报一次」
+   真实上报间隔 = period_min×60 + 90.6 s（会话）+ 4.1 s（收尾）
+   想让上报间隔 = T，应下发 period_min ≈ (T − 95 s) / 60
+
+关键 RAM 符号（本轮固件）
+  g_lp_period_s = 0x2000000C   （睡眠时长，秒）
+  g_lp_cycle    = 0x200004C1
+  s_lp_state    = 0x200004C2   （0 idle / 1 session / 2 closing / 3 sleeping）
+  s_lp_t0       = 0x200004C4
+  uwTick        = 0x20000120
+  _4g_state     = 0x200004D0   （14 = READY）
+
+复位原因判读
+  RCC_CSR = 0x40021024    bit27 PORRSTF · bit26 PINRSTF · bit28 SFTRSTF · bit29 IWDGRSTF
+  清标志：写 bit24 RMVF</pre>
+  <div class="hl">
+    <b>测量注意：</b>Stop 期间若未使能 <code>DBGMCU_CR</code> 的 DBG_STOP 位，SWD 会失联（读回 0 字节或全 0）——这是正常现象，也是<b>真实产品功耗</b>的前提。<br>
+    ⚠️ <b>但注意：本轮的对照实验（§2）显示，使能该位并不会明显抬高睡态电流</b>（两组差 1 µA）。所以「历史上 1.0 mA 是因为开了 DBG_STOP」这个说法<b>不成立</b>，不要再用它解释任何功耗偏差。<br>
+    ⚠️ <b>另一个坑：不要再用 SWD 手写 <code>SCB_SCR</code> 去手动进 Stop。</b>固件主循环每一圈都会重写这个位（<code>lp_stop</code> 为 0 时清掉），手写的 <code>SLEEPDEEP</code> 活不过一圈 —— 这就是早期「Stop 只有 2.3 mA」的根源（见 §1）。要测 Stop 就让 <code>lp_cycle</code> 自己走。<br>
+    ⚠️ <b>还有一个实验副作用（已修）：</b>本次分层实验里用 SWD 人工注入 <code>s_lp_state=2</code> 之后，板子<b>卡在 Stop 里没被闹钟唤醒</b>（F-11 实测 <code>0.200 mA</code> 死平数十分钟，SWD 完全读不到）。处置：<b>继电器 power-cycle → 重新下发 <code>lp_cycle(period=60)</code> → 恢复正常</b>。<br>
+    <b>恢复后复验（208 s）</b>：状态序列 <code>Stop 睡 → 会话 89 s → 收尾 6 s → Stop 睡 59 s → 会话</code>，整周期 155 s；睡态中位 <b>0.211 mA</b>、睡段恰好 58 s —— 与正常流程完全一致。所以「卡住」是<b>人工拼状态的副作用，不是固件的常态行为</b>（642 s 浸泡 / 4 个完整循环里从未出现）。
+  </div>
+</div>
+
+<div class="mut" style="margin-top:26px;text-align:center">
+  车牌 ver2 低功耗项目 · lp_cycle 功耗与校时实测 · 2026-10-13 ·
+  数据：tmp/f11/layer_run.csv、layer_sleep.csv（★ 分层剥离 Run/Sleep）、lpcycle_fixed.csv（主曲线）、
+  lpcycle_rerun.csv / lpcycle_verify.csv（修复前）、dbgstop_test.csv / dbgstop_A.csv（对照）、
+  soak.csv（642 s 纯净浸泡）、verify_fix.log（SWD 状态） ·
+  相关：docs/dtu-reboot-loop-postmortem.html
+</div>
+
+</body>
+</html>

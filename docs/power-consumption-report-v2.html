@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>整板电流实测报告（心跳抑制 + 心跳/探活 2×2 拆分）</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root{
+    --bg:#ffffff; --bg2:#f6f5f1; --fg:#1f1f1e; --fg2:#5f5e5a; --fg3:#888780;
+    --bd:rgba(0,0,0,.12); --card:#ffffff; --accent:#378ADD;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#1c1c1b; --bg2:#262625; --fg:#f1efe8; --fg2:#b4b2a9; --fg3:#888780;
+      --bd:rgba(255,255,255,.16); --card:#242423; --accent:#85B7EB; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.65;font-weight:400;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 24px 64px;}
+  h1{font-size:22px;font-weight:500;margin:0 0 6px;}
+  .sub{color:var(--fg2);font-size:13px;margin:0 0 4px;}
+  .meta{color:var(--fg3);font-size:12px;margin:0 0 28px;}
+  h2{font-size:16px;font-weight:500;margin:36px 0 12px;padding-bottom:8px;border-bottom:0.5px solid var(--bd);}
+  h3{font-size:14px;font-weight:500;margin:22px 0 10px;color:var(--fg);}
+  p{margin:10px 0;color:var(--fg);}
+  .muted{color:var(--fg2);}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0;}
+  .card{background:var(--bg2);border-radius:12px;padding:14px 16px;}
+  .card .lbl{font-size:12px;color:var(--fg2);margin-bottom:4px;}
+  .card .num{font-size:24px;font-weight:500;line-height:1.2;}
+  .card .unit{font-size:13px;color:var(--fg2);font-weight:400;}
+  .chartbox{background:var(--card);border:0.5px solid var(--bd);border-radius:12px;padding:16px 18px;margin:14px 0;}
+  .chartbox h3{margin-top:0;}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:6px 0 12px;font-size:12px;color:var(--fg2);}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin:12px 0;}
+  th,td{padding:7px 8px;border-bottom:0.5px solid var(--bd);text-align:right;white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;white-space:normal;}
+  thead th{color:var(--fg2);font-weight:500;}
+  .hl{background:rgba(29,158,117,.10);}
+  .hl2{background:rgba(186,117,23,.12);}
+  .note{background:var(--bg2);border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px;margin:14px 0;color:var(--fg2);font-size:13px;}
+  ul{margin:10px 0;padding-left:22px;}
+  li{margin:5px 0;}
+  code{background:var(--bg2);border-radius:4px;padding:1px 5px;font-size:12.5px;
+    font-family:"Cascadia Mono",Consolas,monospace;}
+  .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>STM32 车牌灯控板 · 整板电流实测</h1>
+  <p class="sub">心跳抑制 + 长采样，并把 +30 mA 拆成「心跳 / 探活」两份</p>
+  <p class="meta">2026-10-12 · 车牌板 LICENSE_PLATE_BOARD + 银尔达 YED_DTU4 + SC7A20H ·
+    测量：MKLink 探针 <code>power-read --port COM11</code> · 数据源 <code>power_state_test2.log</code></p>
+
+  <div class="cards">
+    <div class="card"><div class="lbl">心跳 · 探活代价</div><div class="num">+30.2 <span class="unit">mA</span></div><div class="lbl" style="margin-top:6px">中位 35.07 → 65.25</div></div>
+    <div class="card"><div class="lbl">噪声 σ 下降</div><div class="num">-47%</div><div class="lbl" style="margin-top:6px">34.50 → 18.09 mA</div></div>
+    <div class="card"><div class="lbl">绿灯 255 净增</div><div class="num">+18.6 <span class="unit">mA</span></div><div class="lbl" style="margin-top:6px">最费电的一路 LED</div></div>
+    <div class="card"><div class="lbl">睡眠态 vs 心跳关</div><div class="num">≈ 0</div><div class="lbl" style="margin-top:6px">WFI 本身不省整板电流</div></div>
+  </div>
+
+  <div class="note">
+    <strong>这轮做了什么：</strong>第一轮每档只采 6 点、且与 15s 心跳 / 60s 探活重叠，档间差异全被突发淹没。
+    这轮用 SWD 直接写 <code>dtu.c</code> 的 static <code>low_power = 1</code>（地址 <code>0x20000584</code>）关掉周期上报
+    （不改固件、不烧录、不影响 MCU 与 LED），并把每档采样拉到 50 点 / 约 90s。
+  </div>
+
+  <h2>1 · 各状态平均电流</h2>
+  <div class="chartbox">
+    <div class="legend">
+      <span><i class="sw" style="background:#BA7517"></i>心跳 · 探活 开</span>
+      <span><i class="sw" style="background:#378ADD"></i>心跳 · 探活 关</span>
+      <span><i class="sw" style="background:#1D9E75"></i>睡眠态</span>
+      <span><i class="sw" style="background:#D85A30"></i>密集收发</span>
+    </div>
+    <div style="position:relative;width:100%;height:430px;">
+      <canvas id="cAvg" role="img" aria-label="各状态整板平均电流横向条形图">见下方数据表</canvas>
+    </div>
+  </div>
+
+  <div class="chartbox">
+    <div class="two">
+      <div>
+        <h3>LED 净增电流（相对全灭基线 35.2 mA）</h3>
+        <div style="position:relative;width:100%;height:210px;">
+          <canvas id="cLed" role="img" aria-label="LED 净增电流条形图">绿灯+18.6，红灯255+7.5，黄灯255+7.1，红灯64+1.3 mA</canvas>
+        </div>
+      </div>
+      <div>
+        <h3>采样噪声 σ（越小越稳）</h3>
+        <div style="position:relative;width:100%;height:210px;">
+          <canvas id="cSd" role="img" aria-label="采样标准差对比条形图">心跳开 34.5，心跳关 18.1，睡眠 19.8</canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>2 · 结果总表</h2>
+  <table>
+    <thead><tr>
+      <th>#</th><th>状态</th><th>U (mV)</th><th>I min</th><th>I 中位</th><th>I avg</th><th>I max</th><th>σ</th><th>P_avg (mW)</th><th>ready</th>
+    </tr></thead>
+    <tbody>
+      <tr class="hl2"><td>1</td><td>运行态 · 心跳开（对照）</td><td>3373</td><td>30.82</td><td><b>65.25</b></td><td>71.69</td><td>160.97</td><td>34.50</td><td>241.7</td><td><b>9</b></td></tr>
+      <tr class="hl"><td>2</td><td>运行态 · 心跳关</td><td>3376</td><td>30.16</td><td><b>35.07</b></td><td>41.65</td><td>133.63</td><td>18.09</td><td>140.5</td><td><b>0</b></td></tr>
+      <tr><td>3</td><td>红灯 255 · 心跳关</td><td>3376</td><td>38.21</td><td>42.67</td><td>51.36</td><td>147.39</td><td>21.71</td><td>173.3</td><td>1</td></tr>
+      <tr><td>4</td><td>红灯 64 · 心跳关</td><td>3375</td><td>31.17</td><td>36.47</td><td>46.73</td><td>133.78</td><td>23.54</td><td>157.7</td><td>1</td></tr>
+      <tr><td>5</td><td>绿灯 255 · 心跳关</td><td>3377</td><td>50.27</td><td>53.78</td><td>62.94</td><td>148.43</td><td>20.84</td><td>212.5</td><td>1</td></tr>
+      <tr><td>6</td><td>黄灯 255 · 心跳关</td><td>3375</td><td>38.39</td><td>42.34</td><td>53.65</td><td>154.72</td><td>24.75</td><td>181.0</td><td>1</td></tr>
+      <tr><td>7</td><td>LED 全灭 · 心跳关</td><td>3375</td><td>31.25</td><td>35.32</td><td>45.73</td><td>139.45</td><td>23.87</td><td>154.3</td><td>1</td></tr>
+      <tr><td>8</td><td>密集收发（心跳抑制失败）</td><td>3372</td><td>59.80</td><td>68.36</td><td>77.70</td><td>143.56</td><td>23.86</td><td>262.0</td><td><b>8</b></td></tr>
+      <tr class="hl"><td>9</td><td>睡眠态（sleep）</td><td>3375</td><td>30.57</td><td>34.29</td><td>41.62</td><td>121.82</td><td>19.82</td><td>140.4</td><td><b>0</b></td></tr>
+      <tr class="hl2"><td>10</td><td>唤醒后 · 心跳开</td><td>3373</td><td>32.06</td><td><b>64.82</b></td><td>65.34</td><td>149.71</td><td>30.02</td><td>220.3</td><td><b>7</b></td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="font-size:12.5px">单位 mA（电压恒 ~3.37 V）；<code>ready</code> = 采样窗口内到达的周期心跳条数，用来验证抑制是否生效。绿底 = 心跳关，橙底 = 心跳开。</p>
+
+  <h2>3 · 结论</h2>
+  <ul>
+    <li><b>心跳 + 探活 ≈ +30 mA，完全可复现。</b>两档"心跳开"中位 65.25 / 64.82，两档"心跳关" 35.07 / 35.32 —— 几乎重合。每条 <code>ready</code> 虽只 ~40 字节，但每次上行都要唤醒射频并可能触发 RRC 状态迁移，摊到平均就有约 30 mA。</li>
+    <li><b>噪声减半（σ 34.50 → 18.09）。</b>残余 σ 来自模组自身的 MQTT keepalive / 网络注册，MCU 管不了 —— <b>只要模组供电就压不到"干净"</b>。</li>
+    <li><b>LED 单项终于分离：绿灯 +18.6 &gt; 红灯 255 +7.5 ≈ 黄灯 255 +7.1 ≫ 红灯 64 +1.3 mA。</b>绿灯最费电（高亮绿光 LED 压降高、同亮度电流大）；调暗到 25% 时几乎不耗。差值远大于残余噪声，可信。</li>
+    <li><b>睡眠态 ≈ 心跳关的运行态（avg 41.62 vs 41.65）。</b>即 <code>{"cmd":"sleep"}</code> 省下的几乎全部是"心跳 / 探活"那一份；<b>MCU 进 WFI 本身省不出可测的整板电流</b>。</li>
+    <li><b>第 8 档"密集收发"是全场上行最密的一档。</b><b>心跳本身就是一次上行，和 ACK 在物理上无区别</b>（都是模组射频发一包 MQTT）——决定平均电流的是<b>上行速率</b>，不是"这包是心跳还是 ACK"。窗口内 8 条 ready + 25 条 ACK = <b>33 条上行 / 114s ≈ 1 条 / 3.5s</b>（第 1 档为 11 条 / 95s ≈ 1 条 / 8.6s），所以它 77.70 mA 最高，是因为发得最勤。心跳泄漏被单独标出，仅因为它<b>意外混入</b>，使该档无法干净归因于"纯指令流量"。<b>已在下一节拆开</b>：+30 mA 全部来自 15s 心跳，探活对典型电平贡献 ≈ 0。</li>
+  </ul>
+
+  <h2>4 · 心跳 vs 探活：把 +30 mA 拆开（2×2 对照）</h2>
+  <p style="font-size:13px;color:var(--fg2);margin:6px 0 12px;">
+    <a href="hb-vs-probe.html" style="color:var(--accent);text-decoration:none;">支线 &middot; 心跳与探活分别是什么、报文差在哪、为什么电流差这么多 &rarr;</a>
+  </p>
+  <p>v2 里"心跳"和"探活"是一起开关的（同在 <code>if (!low_power)</code> 里），分不清那 +30 mA 归谁。
+    这里用 <code>uwTick</code>（<code>0x2000011c</code>，即 <code>DTU_Process</code> 的 <code>now</code>）当"当前时刻"，
+    <b>只压其中一个</b>：压心跳就把 <code>hb_tick</code>(0x20000578) 周期写成当前 uwTick，压探活就把
+    <code>probe_tick</code>(0x2000057c) 周期写成当前 uwTick。</p>
+
+  <div class="chartbox">
+    <div class="legend">
+      <span><i class="sw" style="background:#BA7517"></i>探活 开</span>
+      <span><i class="sw" style="background:#378ADD"></i>探活 关</span>
+    </div>
+    <div class="two">
+      <div>
+        <h3>中位电流（典型电平）</h3>
+        <div style="position:relative;width:100%;height:290px;">
+          <canvas id="cMed" role="img" aria-label="中位电流：心跳开 65.3，心跳关 35.1 毫安">中位：心跳ON 65.31 / 65.30，心跳OFF 35.20 / 34.97 mA</canvas>
+        </div>
+      </div>
+      <div>
+        <h3>平均电流（含突发）</h3>
+        <div style="position:relative;width:100%;height:290px;">
+          <canvas id="cMean" role="img" aria-label="平均电流：心跳开 64.7 与 66.1，心跳关 50.3 与 39.3 毫安">平均：心跳ON 64.70 / 66.09，心跳OFF 50.31 / 39.29 mA</canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>条件</th><th>中位</th><th>avg</th><th>σ</th><th>max</th><th>ready</th><th>探活痕迹</th></tr></thead>
+    <tbody>
+      <tr><td>1 心跳 ON · 探活 ON（对照）</td><td><b>65.31</b></td><td>64.70</td><td>23.36</td><td>146.25</td><td>10</td><td>4</td></tr>
+      <tr><td>2 心跳 ON · 探活 OFF</td><td><b>65.30</b></td><td>66.09</td><td>28.57</td><td>144.91</td><td>7</td><td><b>0</b></td></tr>
+      <tr class="hl"><td>3 心跳 OFF · 探活 ON</td><td><b>35.20</b></td><td>50.31</td><td>28.11</td><td>145.92</td><td>5</td><td><b>8</b></td></tr>
+      <tr class="hl"><td>4 心跳 OFF · 探活 OFF</td><td><b>34.97</b></td><td>39.29</td><td>10.93</td><td>65.80</td><td>1</td><td>0</td></tr>
+    </tbody>
+  </table>
+
+  <ul>
+    <li><b>+30 mA 全部来自 15s 心跳，不是探活。</b>心跳 ON→OFF：中位 <b>65.31 → 35.20（−30.1 mA）</b>；探活 ON→OFF（心跳都开）：中位 <b>65.31 → 65.30（−0.01 mA）</b>。</li>
+    <li><b>探活不改"典型电平"，只制造短促突发。</b>心跳关时才看得清：中位 35.20 vs 34.97（几乎相同），但 avg 50.31 vs 39.29（<b>+11 mA</b>）、σ 28.11 vs 10.93、max 145.92 vs 65.80。探活每 60s 触发一次持续十几秒的高功耗窗口（切出透传 → 查询 → 恢复），把平均值抬高，中位数不受影响。</li>
+    <li><b>两者不叠加。</b>心跳开着时探活的边际成本 ≈ 0（射频本来就被心跳维持在高位，增量被吸收）。</li>
+    <li><b>机制</b>：心跳是真正的空口上行（每 15s 一包 MQTT）；探活主要是串口级交互（<code>+++</code>、<code>config,get,ssta</code> 是模组本地查询，不走空口），只在收尾补发一次 <code>ready</code>。</li>
+    <li>第 4 档（什么都不发）σ 只有 10.93、max 只有 65.80，是全场最干净的基线——说明那 ~145 mA 的尖峰就是<b>上行突发</b>。</li>
+    <li><b>工程含义</b>：要降平均功耗，动 <code>HB_PERIOD_MS</code> 最有效，动探活几乎没用；探活的价值是链路自愈，不是省电。</li>
+  </ul>
+
+  <h2>5 · 方法与局限</h2>
+  <ul>
+    <li>仍是<b>探针 VCC 总线总电流</b>（MCU + 模组 + LED + 传感器混在一起），只有"心跳开/关"与"LED 各色"是<b>对照</b>出来的差分值。</li>
+    <li>残余 σ 仍 ~20 mA，<b>只有 ≥7 mA 且跨档一致的差值才可信</b>；红灯 64 与基线之差仅 1.3 mA，属边界，仅供参考。</li>
+    <li>CLI <code>power-read</code> 每次调用间隔 ~1s（含进程启动），<code>max</code> 只代表"撞上突发"，无统计意义。</li>
+    <li>写 <code>low_power</code> 只停 MCU 侧周期发言，<b>没有</b>下发模组 <code>lp</code> 指令，故测出的差值纯属"MCU 停说"这一项。</li>
+    <li><b>未做</b>：<code>{"cmd":"v4g","state":"off"}</code> 4G 断电档（需 SWD 写 <code>GPIOA-&gt;BSRR</code> 恢复，有风险）。做完它才能真正分离"纯 MCU / 纯 LED"电流。</li>
+  </ul>
+
+</div>
+
+<script>
+(function(){
+  var isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+  var tick = isDark ? '#B4B2A9' : '#5F5E5A';
+  var lab  = isDark ? '#D3D1C7' : '#444441';
+  var gc   = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
+  function xAxis(t){ return {beginAtZero:true, title:{display:true,text:t,color:tick}, ticks:{color:tick}, grid:{color:gc}}; }
+  function yAxis(){ return {ticks:{color:lab,font:{size:11}}, grid:{display:false}}; }
+
+  new Chart(document.getElementById('cAvg'), {
+    type:'bar',
+    data:{
+      labels:['运行态 · 心跳开(对照)','运行态 · 心跳关','红灯 255 · 心跳关','红灯 64 · 心跳关',
+              '绿灯 255 · 心跳关','黄灯 255 · 心跳关','LED 全灭 · 心跳关','密集收发(心跳部分开)',
+              '睡眠态','唤醒后 · 心跳开'],
+      datasets:[{data:[71.7,41.7,51.4,46.7,62.9,53.7,45.7,77.7,41.6,65.3],
+        backgroundColor:['#BA7517','#378ADD','#378ADD','#378ADD','#378ADD','#378ADD','#378ADD','#D85A30','#1D9E75','#BA7517'],
+        borderRadius:4}]
+    },
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' 平均 '+c.parsed.x+' mA';}}}},
+      scales:{x:xAxis('平均电流 (mA)'),y:yAxis()}}
+  });
+
+  new Chart(document.getElementById('cLed'), {
+    type:'bar',
+    data:{
+      labels:['绿灯 255','红灯 255','黄灯 255','红灯 64 (25%)'],
+      datasets:[{data:[18.6,7.5,7.1,1.3],
+        backgroundColor:['#1D9E75','#E24B4A','#BA7517','#F09595'],borderRadius:4}]
+    },
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' +'+c.parsed.x+' mA';}}}},
+      scales:{x:xAxis('净增电流 (mA)'),y:yAxis()}}
+  });
+
+  new Chart(document.getElementById('cSd'), {
+    type:'bar',
+    data:{
+      labels:['运行态 · 心跳开','运行态 · 心跳关','睡眠态'],
+      datasets:[{data:[34.5,18.1,19.8],
+        backgroundColor:['#BA7517','#378ADD','#1D9E75'],borderRadius:4}]
+    },
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' σ = '+c.parsed.x+' mA';}}}},
+      scales:{x:xAxis('标准差 (mA)'),y:yAxis()}}
+  });
+  function matrix(id, probeOn, probeOff, axisTitle){
+    new Chart(document.getElementById(id), {
+      type:'bar',
+      data:{labels:['心跳 ON','心跳 OFF'],datasets:[
+        {label:'探活 开',data:probeOn,backgroundColor:'#BA7517',borderRadius:4},
+        {label:'探活 关',data:probeOff,backgroundColor:'#378ADD',borderRadius:4}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},
+          tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+' '+c.parsed.y+' mA';}}}},
+        scales:{x:{ticks:{color:lab,font:{size:12}},grid:{display:false}},
+                y:{beginAtZero:true,suggestedMax:75,title:{display:true,text:axisTitle,color:tick},
+                   ticks:{color:tick},grid:{color:gc}}}}});
+  }
+  matrix('cMed', [65.31,35.20], [65.30,34.97], '中位电流 (mA)');
+  matrix('cMean',[64.70,50.31], [66.09,39.29], '平均电流 (mA)');
+})();
+</script>
+</body>
+</html>

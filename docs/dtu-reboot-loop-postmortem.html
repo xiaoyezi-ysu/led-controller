@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DTU 反复重启复盘 —— 状态机跳转时机 × 旧 hex 两个真凶</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1e2430; --mut:#6b7280; --line:#e5e8ef;
+    --green:#16a34a; --red:#dc2626; --blue:#2563eb; --purple:#7c3aed; --amber:#d97706;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 4vw;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.65}
+  h1{font-size:25px;margin:0 0 6px;letter-spacing:.2px}
+  h2{font-size:18px;margin:34px 0 12px;border-left:4px solid var(--blue);padding-left:11px}
+  h3{font-size:15px;margin:18px 0 8px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin:14px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .lab{font-size:12px;color:var(--mut)}
+  .kpi .val{font-size:23px;font-weight:700;margin-top:3px}
+  .kpi .val small{font-size:12.5px;font-weight:400;color:var(--mut)}
+  .good{border-left:4px solid var(--green);background:#f0fdf4;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .bad{border-left:4px solid var(--red);background:#fef2f2;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .hl{border-left:4px solid var(--amber);background:#fffbeb;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .info{border-left:4px solid var(--blue);background:#eff6ff;border-radius:8px;padding:12px 15px;margin:11px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.8px;
+       font-family:"Cascadia Code",Consolas,monospace}
+  .mono{font-family:"Cascadia Code",Consolas,monospace}
+  .mut{color:var(--mut);font-size:12.5px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:820px){.two{grid-template-columns:1fr}}
+  .culprit{border-radius:12px;padding:16px 18px;border:1px solid var(--line);background:var(--card)}
+  .culprit .tag{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.5px;
+       padding:2px 9px;border-radius:20px;margin-bottom:8px}
+  .tag-r{background:#fee2e2;color:#b91c1c}
+  .tag-b{background:#dbeafe;color:#1d4ed8}
+  .culprit h3{margin:4px 0 8px;font-size:15.5px}
+  ul{margin:8px 0 4px;padding-left:22px}
+  li{margin:4px 0}
+  .flowwrap{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 4px 14px;text-align:center}
+  svg{max-width:100%;height:auto}
+  .center-title{font-size:14px;font-weight:700;fill:#b91c1c}
+  .center-sub{font-size:11px;fill:#9ca3af}
+  .node-t{font-size:11.5px;font-weight:600;fill:#1e2430}
+  .node-s{font-size:10.5px;fill:#6b7280}
+</style>
+</head>
+<body>
+
+<h1>DTU「反复重启」复盘 —— <span style="color:var(--red)">两个真凶</span>，都不是接线</h1>
+<div class="sub">2026-10-13 · 车牌 ver2 · STM32F103 + 银尔达 DTU 透传固件 · 现象持续约 5 小时 · 结论：探活状态机跳转时机错位 + 烧录的 hex 是旧的</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="lab">真凶 #1</div><div class="val" style="color:var(--blue)">探活时序</div><div class="mut">清行/超时窗口赌延迟</div></div>
+  <div class="kpi"><div class="lab">真凶 #2</div><div class="val" style="color:var(--blue)">旧 hex 未烧进去</div><div class="mut">ninja 吞掉 objcopy</div></div>
+  <div class="kpi"><div class="lab">修复后探活成功率</div><div class="val" style="color:var(--green)">5 / 5</div><div class="mut">60 s 周期稳定 READY</div></div>
+  <div class="kpi"><div class="lab">RTC 授时误差</div><div class="val" style="color:var(--green)">≤ 2 <small>s</small></div><div class="mut">nettime 全链路验证</div></div>
+</div>
+
+<h2>0. 先直接回答你的问题</h2>
+<div class="card">
+  <div class="info">
+    <b>「主要问题是状态机跳转的时机不对？」—— 对，这是核心。但它是两根绞在一起的绳子，缺一根都解释不通。</b>
+  </div>
+  <p style="margin:10px 0 6px">把 5 小时的怪象拆开，其实只有两件事在起作用：</p>
+  <ol style="margin:6px 0">
+    <li><b>探活状态机用「固定时间窗口」去赌一个「延迟浮动 1~4 秒」的应答</b> —— 窗口 / 清行时机与应答到达时刻错位，就把真实应答丢掉 → 误判离线 → 重启 DTU → 引发连锁（回声、乱码、电流掉到几 mA）。这是<b>真实存在的 bug</b>。</li>
+    <li><b>修好的代码根本没被烧进芯片</b> —— 构建系统的一个小错误让 <code>.hex</code> 停留在 4 小时前，OpenOCD 烧的是旧固件还报 “Verify OK”。所以「改了没效果」不是改错了，是<b>没生效</b>。</li>
+  </ol>
+  <div class="hl" style="margin-top:12px">
+    一句话因果链：<b>应答迟到 → 被状态机吃掉 → 判死重启 DTU → DTU 重启期 TX 悬空 → MCU 收到自己的「回声+乱码」 → 再次误判 → 无限循环</b>；而旧 hex 让这个循环一直没被修复版代码救回来，于是看起来像「接线坏了」。
+  </div>
+</div>
+
+<h2>1. 你看到的三个现象（同一件事的三个面）</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:26%">现象</th><th>你的观察</th><th style="width:44%">当时的误判</th></tr>
+    <tr>
+      <td><b>电流掉到几 mA</b></td>
+      <td>「4G 模组没上电啊，所以没测到」</td>
+      <td>一度以为固件把 V4G 切了。<b>查实：自愈流程从不切 V4G</b>，全工程唯一的 <code>V4G_Set(0)</code> 在 lp_cycle 收尾；那是历史残留值，你看到的是模组被反复重启的抖动。</td>
+    </tr>
+    <tr>
+      <td><b>MCU 收到自己的字节</b></td>
+      <td>「回声 + 乱码」出现在接收缓冲里</td>
+      <td>一度判定「接线短路了、TX/RX 搭到一个脚上」。<b>查实：接线一直是对的</b>，回声是 DTU 被重启期间 TX 悬空、被 MCU_TX 串扰出来的耦合噪声。</td>
+    </tr>
+    <tr>
+      <td><b>状态机来回跳</b></td>
+      <td>POLL → RECOVER → WAIT_BOOT 循环不停</td>
+      <td>这个是真的 —— 就是真凶 #1 的表现。</td>
+    </tr>
+  </table>
+</div>
+
+<h2>2. 恶性循环全景图</h2>
+<div class="flowwrap">
+<svg viewBox="0 0 680 430" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="DTU 反复重启的恶性循环">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+
+  <!-- 环形箭头（顺时针） -->
+  <g fill="none" stroke="#dc2626" stroke-width="2.2" marker-end="url(#ah)" opacity="0.85">
+    <path d="M396.2 90.9 A 150 150 0 0 1 454.9 133.6"/>
+    <path d="M489.6 240.5 A 150 150 0 0 1 467.2 309.5"/>
+    <path d="M376.3 375.5 A 150 150 0 0 1 303.7 375.5"/>
+    <path d="M212.8 309.5 A 150 150 0 0 1 190.4 240.5"/>
+    <path d="M225.1 133.6 A 150 150 0 0 1 283.8 90.9"/>
+  </g>
+
+  <!-- 中心 -->
+  <text x="340" y="222" text-anchor="middle" class="center-title">恶性循环</text>
+  <text x="340" y="240" text-anchor="middle" class="center-sub">自我维持 · 无外部干预不退出</text>
+
+  <!-- A 顶部 -->
+  <rect x="256" y="56" width="168" height="58" rx="11" fill="#fff5f5" stroke="#fca5a5" stroke-width="1.6"/>
+  <text x="340" y="78" text-anchor="middle" class="node-t">① 探活漏掉应答</text>
+  <text x="340" y="94" text-anchor="middle" class="node-s">DTU 应答延迟 1~4 s（浮动）</text>
+  <text x="340" y="107" text-anchor="middle" class="node-s">固定窗口对不上 → 判「没回」</text>
+
+  <!-- B 右上 -->
+  <rect x="399" y="161" width="168" height="58" rx="11" fill="#fff5f5" stroke="#fca5a5" stroke-width="1.6"/>
+  <text x="483" y="183" text-anchor="middle" class="node-t">② 固件判死</text>
+  <text x="483" y="199" text-anchor="middle" class="node-s">发 config,set,save</text>
+  <text x="483" y="212" text-anchor="middle" class="node-s">让 DTU「自己重启」</text>
+
+  <!-- C 右下 -->
+  <rect x="344" y="323" width="168" height="58" rx="11" fill="#fff5f5" stroke="#fca5a5" stroke-width="1.6"/>
+  <text x="428" y="345" text-anchor="middle" class="node-t">③ DTU 重启中</text>
+  <text x="428" y="361" text-anchor="middle" class="node-s">注网 30~60 s</text>
+  <text x="428" y="374" text-anchor="middle" class="node-s">TX 引脚悬空</text>
+
+  <!-- D 左下 -->
+  <rect x="168" y="323" width="168" height="58" rx="11" fill="#fff5f5" stroke="#fca5a5" stroke-width="1.6"/>
+  <text x="252" y="345" text-anchor="middle" class="node-t">④ MCU 听见自己</text>
+  <text x="252" y="361" text-anchor="middle" class="node-s">TX 串扰到悬空的 RX</text>
+  <text x="252" y="374" text-anchor="middle" class="node-s">＝「回声 + 乱码」</text>
+
+  <!-- E 左上 -->
+  <rect x="113" y="161" width="168" height="58" rx="11" fill="#fff5f5" stroke="#fca5a5" stroke-width="1.6"/>
+  <text x="197" y="183" text-anchor="middle" class="node-t">⑤ 乱码再次误判</text>
+  <text x="197" y="199" text-anchor="middle" class="node-s">非 ssta 应答 / 无应答</text>
+  <text x="197" y="212" text-anchor="middle" class="node-s">→ 回到 ①</text>
+</svg>
+</div>
+<div class="bad">
+  <b>循环的关键放大器：</b>DTU 重启要 30~60 秒才能注网完毕，而固件在这段时间里<b>又去探活</b>——必然失败，于是再发一条 <code>save</code>。DTU 永远拿不到一段完整的启动时间，从此再也回不到在线状态。<b>「模组启动慢」（官方正常行为）+「探活窗口太紧」（固件问题）相撞，就是这个死循环的引擎。</b>
+</div>
+
+<h2>3. 真凶 #1：状态机跳转的时机（核心 bug）</h2>
+<div class="card">
+  <h3>旧实现：异步子状态机 —— 用「固定的表」去赌「浮动的钟」</h3>
+  <p class="mut">探活每 60 s 触发一次，走的是三个状态接力：</p>
+  <table>
+    <tr><th style="width:30%">状态 / 常量</th><th style="width:22%">等待</th><th>干什么</th></tr>
+    <tr><td><code>RECOVER_ESC</code><br><span class="mut">ESC_GUARD_MS = 1000</span></td><td>+++ 后等 1 s</td><td>到点后 <code>dtu_clear_line()</code> 清缓冲，发 <code>config,get,ssta</code>，切下一态</td></tr>
+    <tr><td><code>RECOVER_SSTA</code><br><span class="mut">SSTA_TIMEOUT_MS = 5000</span></td><td>最多等 5 s</td><td>看到整行就解析 <code>ssta</code>；<b>不是 ssta 应答就 <code>clear_line()</code> 清掉继续等</b>；5 s 还没等到 → 判死 → <code>config,set,save</code></td></tr>
+  </table>
+  <div class="bad" style="margin-top:14px">
+    <b>错在哪：</b>「+++ 的回显」「ssta 的应答」到达时间是<b>浮动</b>的（模组忙时 1~4 s，疲态更久），但状态机用 <b>1 s 守卫 + 5 s 超时 + 一个 clear_line</b> 这三块固定积木去卡它。任何一次「应答落在 clear_line 之前、或超过 5 s 窗口」，真实应答就被丢掉 —— 而且丢一次就触发重启，重启又制造更多延迟，误差自我放大。
+  </div>
+  <div class="hl">
+    <b>为什么今早能跑通？</b>今天上午模组轻载、应答快，时序<b>碰巧</b>对上了；一旦链路有波动就翻车。所以这是「成功率不是 100%」的时序 bug，不是逻辑错。
+  </div>
+</div>
+
+<h3>时序对比：固定窗口 vs 阻塞自留窗口</h3>
+<div class="flowwrap">
+<svg viewBox="0 0 680 268" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="旧异步探活与新阻塞探活的时序对比">
+  <!-- 轴刻度 -->
+  <g font-size="10.5" fill="#9ca3af" text-anchor="middle">
+    <text x="70" y="20">0 s</text>
+    <text x="200" y="20">1 s</text>
+    <text x="330" y="20">2 s</text>
+    <text x="460" y="20">3 s</text>
+    <text x="590" y="20">4 s</text>
+  </g>
+  <g stroke="#eef1f6" stroke-width="1">
+    <line x1="70" y1="26" x2="70" y2="250"/>
+    <line x1="200" y1="26" x2="200" y2="250"/>
+    <line x1="330" y1="26" x2="330" y2="250"/>
+    <line x1="460" y1="26" x2="460" y2="250"/>
+    <line x1="590" y1="26" x2="590" y2="250"/>
+  </g>
+
+  <!-- ===== 上排：旧异步 ===== -->
+  <text x="70" y="52" font-size="12" font-weight="700" fill="#b91c1c">旧：异步子状态机</text>
+  <text x="70" y="68" font-size="10.5" fill="#9ca3af">固定 1 s 守卫 / clear_line / 5 s 超时</text>
+
+  <rect x="70" y="78" width="130" height="26" rx="5" fill="#fde68a"/>
+  <text x="135" y="95" text-anchor="middle" font-size="10.5" fill="#78350f">+++ 后守卫 1 s</text>
+
+  <rect x="202" y="78" width="58" height="26" rx="5" fill="#fecaca" stroke="#ef4444"/>
+  <text x="231" y="95" text-anchor="middle" font-size="10.5" fill="#7f1d1d">清行</text>
+
+  <rect x="262" y="78" width="200" height="26" rx="5" fill="#e0e7ff"/>
+  <text x="362" y="95" text-anchor="middle" font-size="10.5" fill="#3730a3">死等 ssta（5 s 窗口）</text>
+
+  <!-- 危险区：应答实际到达 -->
+  <rect x="200" y="112" width="230" height="20" rx="5" fill="#fee2e2" stroke="#f87171" stroke-dasharray="4 3"/>
+  <text x="315" y="126" text-anchor="middle" font-size="10.5" fill="#b91c1c">应答实际会在 1~4 s 之间的任意点到 → 撞上「清行」就被吃掉，落在窗外就超时</text>
+
+  <line x1="70" y1="146" x2="640" y2="146" stroke="#e5e8ef"/>
+
+  <!-- ===== 下排：新阻塞 ===== -->
+  <text x="70" y="172" font-size="12" font-weight="700" fill="#15803d">新：阻塞式查询</text>
+  <text x="70" y="188" font-size="10.5" fill="#9ca3af">发完就死等，应答窗口自留（同 DebugProbe）</text>
+
+  <rect x="70" y="198" width="90" height="26" rx="5" fill="#fde68a"/>
+  <text x="115" y="215" text-anchor="middle" font-size="10.5" fill="#78350f">+++</text>
+
+  <rect x="162" y="198" width="120" height="26" rx="5" fill="#bbf7d0"/>
+  <text x="222" y="215" text-anchor="middle" font-size="10.5" fill="#14532d">等 1300 ms</text>
+
+  <rect x="284" y="198" width="150" height="26" rx="5" fill="#e0e7ff"/>
+  <text x="359" y="215" text-anchor="middle" font-size="10.5" fill="#3730a3">发 ssta + 等 1500 ms</text>
+
+  <rect x="436" y="198" width="130" height="26" rx="5" fill="#a7f3d0"/>
+  <text x="501" y="215" text-anchor="middle" font-size="10.5" fill="#065f46">读行 → ENTM 1000 ms</text>
+
+  <rect x="162" y="232" width="404" height="20" rx="5" fill="#dcfce7" stroke="#4ade80" stroke-dasharray="4 3"/>
+  <text x="364" y="246" text-anchor="middle" font-size="10.5" fill="#166534">整个窗口都是「应答安全区」—— 读到就判，读不到才重试（重试一次仍失败才判死）</text>
+</svg>
+</div>
+
+<h2>4. 真凶 #2：烧进去的是 4 小时前的旧固件</h2>
+<div class="card">
+  <p>这是整场迷局里<b>最贵的一个坑</b>，因为它把「改对了」伪装成「改了没用」。</p>
+  <table>
+    <tr><th style="width:34%">检查项</th><th>结果</th></tr>
+    <tr><td><code>build/Debug/*.elf</code> 时间戳</td><td>05:06 —— <b>是新的</b>（编译确实成功了）</td></tr>
+    <tr><td><code>build/Debug/*.hex</code> 时间戳</td><td><b style="color:var(--red)">01:39 —— 停在 3.5 小时前</b></td></tr>
+    <tr><td>芯片 Flash 里搜特征串</td><td>搜到旧代码的 <code>"escape transparent"</code>，搜不到新代码的 <code>"blocking"</code> → <b>芯片上跑的是旧固件</b></td></tr>
+    <tr><td>OpenOCD 的反馈</td><td>“Verify OK” —— <b>它验的是那个旧 hex，所以永远 OK</b></td></tr>
+  </table>
+  <div class="hl" style="margin-top:12px">
+    <b>根因：</b>ninja 构建时偶发的 <code>.ninja_lock</code> 占用报错，把编译链最后一步「<code>.elf</code> → <code>.hex</code>」（objcopy）吞掉了。ninja 报错只在收尾，容易让人以为「只是收尾噪音、编译其实成功了」—— 实际上 <b>elf 成功、hex 失败</b>，而烧录用的是 hex。
+  </div>
+  <div class="good">
+    <b>处置：</b>手工补一步 <code>arm-none-eabi-objcopy -O ihex xxx.elf xxx.hex</code> 重新生成 hex → 重新烧录 → Flash 验尸确认 <code>"blocking"</code> 已上芯。此后再观察，状态机行为立刻与代码一致。
+  </div>
+  <div class="bad">
+    <b>教训（已写进项目备忘录）：</b>烧录前<b>必查 <code>.hex</code> 的 mtime</b>，或改用「elf 直接下载」的流程；只要 ninja 出现过 lock 报错，就当作 hex 可疑处理。
+  </div>
+</div>
+
+<h2>5. 修复与实机验证</h2>
+<div class="card">
+  <h3>修复 ①：探活改阻塞式</h3>
+  <p>新增 <code>dtu_probe_blocking()</code>（≈4.2 s）：<code>+++</code> → 等 1300 ms → 发 <code>config,get,ssta</code> → <b>死等 1500 ms</b> → 读整行 → <code>AT+ENTM</code> → 等 1000 ms → 返回 <code>ssta==4</code>。失败时先重试一次，<b>两连败才判死</b>（旧逻辑是一次失败就重启）。</p>
+  <p class="mut">为什么它能行：应答窗口是<b>自己留出来的</b>，不存在「清行时机」和「应答到达」的竞争；而且它只在空闲时（<code>cmd_rx_tick</code> 守卫通过）被调用，阻塞期间主循环暂停、心跳不冲突 —— 和当天 100% 成功的 <code>DTU_DebugProbe</code> 是同一套节奏。</p>
+
+  <h3>修复 ②：nettime 授时回接</h3>
+  <p>新增 <code>DTU_QueryNettime()</code>（指令模式阻塞 1.5 s，解析 <code>config,nettime,ok,...</code> 后写 RTC）。此前判定它「会卡死通道」其实是<b>同一个应答被吃掉的误判</b>；PC 直连复测它 0.15 s 秒回。</p>
+
+  <h3>实测结果</h3>
+  <table>
+    <tr><th style="width:44%">验证项</th><th>结果</th></tr>
+    <tr><td>探活（60 s 周期，连跑 5 轮）</td><td><b style="color:var(--green)">5/5 成功</b>，<code>config,ssta,ok,4</code> 干净秒回，约 3.7 s 完成，稳定停在 READY</td></tr>
+    <tr><td>再出现误判重启？</td><td>无。不再有 <code>config,set,save</code> 循环，不再有回声/乱码</td></tr>
+    <tr><td>lp_cycle 整轮（Stop → 唤醒 → 会话 → 再睡）</td><td>RTC 计数与 PC 墙钟误差 <b style="color:var(--green)">≤ 2 s</b>（RTC 从「数开机秒数」变成真正的 Unix 时间）</td></tr>
+    <tr><td>Flash 内容验尸</td><td>新特征串 <code>"blocking"</code> 已上芯</td></tr>
+  </table>
+  <div class="good" style="margin-top:12px">
+    板子已恢复常在线模式（lp_cycle 关闭、4G 在线）。要再开定时循环：MQTT 下发 <code>{"cmd":"lp_cycle","period_min":N}</code>。
+  </div>
+</div>
+
+<h2>6. 两个真凶的关系（为什么缺一不可）</h2>
+<div class="card">
+  <div class="two">
+    <div class="culprit">
+      <span class="tag tag-b">真凶 #1</span>
+      <h3>探活时机的 bug</h3>
+      <p class="mut">它<b>制造</b>了恶性循环：把模组启动慢误判成离线，反复重启。</p>
+      <p class="mut">没有它，就没有回声、没有电流抖动、没有状态机乱跳。</p>
+    </div>
+    <div class="culprit">
+      <span class="tag tag-r">真凶 #2</span>
+      <h3>旧 hex 没烧进去</h3>
+      <p class="mut">它<b>掩盖</b>了修复：代码对了，芯片上是旧的，所以行为一直不变。</p>
+      <p class="mut">没有它，第一轮改完就该好了 —— 不至于排查 5 小时、还错怪了接线。</p>
+    </div>
+  </div>
+  <div class="hl" style="margin-top:14px">
+    <b>组合起来才形成「越修越像硬件问题」的假象：</b>你改了固件 → 行为完全不变 → 于是怀疑硬件/接线 → 去动线 → 链路波动 → 触发更多重启 → 现象更像硬件坏了 → 循环。
+  </div>
+</div>
+
+<h2>7. 沉淀：5 条经验</h2>
+<div class="card">
+  <ol style="margin:4px 0">
+    <li><b>烧录前先看 <code>.hex</code> 的 mtime。</b>ninja 的 lock 报错可能吞掉 objcopy，「Verify OK」只证明「烧的和 hex 一样」，不证明「hex 是新的」。</li>
+    <li><b>「改了没效果」的第一反应是验证产物，而不是怀疑硬件。</b>最省时的验尸法：在 Flash 里搜新旧代码的唯一特征字符串。</li>
+    <li><b>和设备通信的等待窗口不要「赌」。</b>对方应答延迟浮动时，用「发完死等 + 读就判 + 失败重试」的阻塞式，好过「固定 guard + clear + 固定超时」的异步状态机。</li>
+    <li><b>自愈策略要留出「对方正在启动」的余量。</b>一次性判死重启，会把「慢启动」变成「永久起不来」。</li>
+    <li><b>悬空的 TX/RX 会自导自演。</b>「MCU 收到自己发的字节」= 对端没在驱动，是链路在对端失效的表现，不要直接推成「接线短路」。</li>
+  </ol>
+</div>
+
+<div class="mut" style="margin-top:26px;text-align:center">
+  车牌 ver2 低功耗项目 · DTU 通信复盘 · 2026-10-13 · 相关：docs/rtc-wakeup-cycle.html、docs/low-power-1mA-plan.md §17
+</div>
+
+</body>
+</html>

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4G 模组断电实测（v4g off）+ LED 电流分离</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root{
+    --bg:#ffffff; --bg2:#f6f5f1; --fg:#1f1f1e; --fg2:#5f5e5a; --fg3:#888780;
+    --bd:rgba(0,0,0,.12); --card:#ffffff; --accent:#378ADD;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#1c1c1b; --bg2:#262625; --fg:#f1efe8; --fg2:#b4b2a9; --fg3:#888780;
+      --bd:rgba(255,255,255,.16); --card:#242423; --accent:#85B7EB; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.65;font-weight:400;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 24px 64px;}
+  h1{font-size:22px;font-weight:500;margin:0 0 6px;}
+  .sub{color:var(--fg2);font-size:13px;margin:0 0 4px;}
+  .meta{color:var(--fg3);font-size:12px;margin:0 0 28px;}
+  h2{font-size:16px;font-weight:500;margin:36px 0 12px;padding-bottom:8px;border-bottom:0.5px solid var(--bd);}
+  h3{font-size:14px;font-weight:500;margin:22px 0 10px;color:var(--fg);}
+  p{margin:10px 0;color:var(--fg);}
+  .muted{color:var(--fg2);}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0;}
+  .card{background:var(--bg2);border-radius:12px;padding:14px 16px;}
+  .card .lbl{font-size:12px;color:var(--fg2);margin-bottom:4px;}
+  .card .num{font-size:24px;font-weight:500;line-height:1.2;}
+  .card .unit{font-size:13px;color:var(--fg2);font-weight:400;}
+  .chartbox{background:var(--card);border:0.5px solid var(--bd);border-radius:12px;padding:16px 18px;margin:14px 0;}
+  .chartbox h3{margin-top:0;}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:6px 0 12px;font-size:12px;color:var(--fg2);}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin:12px 0;}
+  th,td{padding:7px 8px;border-bottom:0.5px solid var(--bd);text-align:right;white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;white-space:normal;}
+  thead th{color:var(--fg2);font-weight:500;}
+  .hl{background:rgba(29,158,117,.10);}
+  .hl2{background:rgba(186,117,23,.12);}
+  .note{background:var(--bg2);border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px;margin:14px 0;color:var(--fg2);font-size:13px;}
+  .warn{border-left-color:#D85A30;}
+  ul{margin:10px 0;padding-left:22px;}
+  li{margin:5px 0;}
+  code{background:var(--bg2);border-radius:4px;padding:1px 5px;font-size:12.5px;
+    font-family:"Cascadia Mono",Consolas,monospace;}
+  .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>4G 模组断电实测（<code>v4g off</code>）</h1>
+  <p class="sub">模组单独吃掉 42.2 mA；断电后噪声从 σ≈29 掉到 σ≈1.3，各 LED 的真实电流终于被分离出来</p>
+  <p class="meta">2026-10-12 · 车牌板 LICENSE_PLATE_BOARD · MKLink 探针 <code>power-read --port COM11</code> ·
+    数据源 <code>power_v4g_off.log</code> / <code>power_led_off.log</code></p>
+
+  <div class="cards">
+    <div class="card"><div class="lbl">4G 模组自身耗电</div><div class="num">42.2 <span class="unit">mA</span></div><div class="lbl" style="margin-top:6px">64.16 → 21.96 mA（中位）</div></div>
+    <div class="card"><div class="lbl">整板电流降幅</div><div class="num">-66%</div><div class="lbl" style="margin-top:6px">模组占了 2/3</div></div>
+    <div class="card"><div class="lbl">噪声 σ</div><div class="num">1.33 <span class="unit">mA</span></div><div class="lbl" style="margin-top:6px">断电前 28.82</div></div>
+    <div class="card"><div class="lbl">绿灯 255 净增</div><div class="num">+19.2 <span class="unit">mA</span></div><div class="lbl" style="margin-top:6px">红/黄仅 ≈+7.4</div></div>
+  </div>
+
+  <div class="note warn">
+    <strong>先说一个会让指令静默失效的坑：</strong>你给的 <code>{"cmd":"v4g","state":"off"}</code> <b>不会生效</b>。
+    <code>main.c</code> 的指令校验里只有 <code>{"cmd":"led"}</code> 和 <code>{"cmd":"sleep"}</code> 豁免 ICCID 校验，
+    <code>v4g</code> 属普通指令，payload 里必须出现 ICCID，否则 <code>match = 0</code> 直接被丢弃。实测对照如下（PA3 电平读回）：
+  </div>
+
+  <table>
+    <thead><tr><th>下发的 payload</th><th>PA3 读回</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td><code>{"cmd":"v4g","state":"off"}</code></td><td>1</td><td>被固件丢弃，模组仍供电</td></tr>
+      <tr class="hl"><td><code>{"cmd":"v4g","state":"off","id":"898608961026C0241530"}</code></td><td>0</td><td>生效，4G 断电</td></tr>
+    </tbody>
+  </table>
+
+  <h2>1 · 4G 断电前后</h2>
+
+  <div class="chartbox">
+    <h3>整板电流（中位）：模组 vs 其余电路</h3>
+    <div class="legend">
+      <span><span class="sw" style="background:#E24B4A"></span>4G 模组</span>
+      <span><span class="sw" style="background:#85B7EB"></span>其余电路（MCU / 传感器 / 板载）</span>
+    </div>
+    <div style="position:relative;width:100%;height:190px;">
+      <canvas id="c1" role="img" aria-label="堆叠条形图：4G 上电 64.2 mA，其中模组 42.2、其余 22.0；4G 断电 22.0 mA">4G 上电 64.2 mA，4G 断电 22.0 mA</canvas>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>状态</th><th>min</th><th>中位</th><th>avg</th><th>max</th><th>σ</th><th>P_avg</th><th>n</th></tr></thead>
+    <tbody>
+      <tr><td>A · 4G 上电 · LED 全灭（基线）</td><td>32.29</td><td>64.16</td><td>67.38</td><td>142.94</td><td>28.82</td><td>227.2 mW</td><td>45</td></tr>
+      <tr class="hl"><td>B · 4G 断电 · LED 全灭</td><td>19.62</td><td>21.96</td><td>22.08</td><td>25.38</td><td>1.33</td><td>74.8 mW</td><td>45</td></tr>
+      <tr><td>I · 4G 恢复后（验证）</td><td>30.87</td><td>63.61</td><td>63.47</td><td>123.96</td><td>24.60</td><td>214.1 mW</td><td>30</td></tr>
+    </tbody>
+  </table>
+
+  <p>三点值得记：</p>
+  <ul>
+    <li><b>42.2 mA 是「模组维持 MQTT + 周期发射」的全部代价</b>，占整板 66%。断电后最低电流 19.6 mA、最高只有 25.4 mA —— 模组那一路的突发尖峰（最高 143 mA）全部消失。</li>
+    <li><b>断电是可逆的</b>：SWD 写 <code>GPIOA-&gt;BSRR</code>（<code>0x40010810</code> 写 <code>0x08</code>）拉高 PA3，模组 16 秒后重新上线（<code>ready</code> 心跳回来），电流回到 63.6 mA。但注意 <b>不能用 MQTT 发 <code>v4g on</code> 恢复</b> —— 模组断电后 MQTT 收不到命令，必须走 SWD。</li>
+    <li>断电期间顺手把 <code>dtu.c</code> 的 <code>low_power</code> 写 1，冻结心跳/探活，免得探活超时把状态机带进 <code>WAIT_BOOT</code> 乱跳（探活只发串口命令，不会自己去拉高 PA3，所以断电状态本身是稳定的）。</li>
+  </ul>
+
+  <h2>2 · LED 电流分离（4G 断电后）</h2>
+
+  <p>4G 一断，σ 从 28.8 掉到 1.3，LED 那十几 mA 终于能从噪声里浮出来。用 SWD 直接写
+    <code>TIM3-&gt;CCRx</code>（红 <code>0x40000434</code> / 黄 <code>0x40000438</code> / 绿 <code>0x4000043C</code>）逐档点灯，
+    每档写后读回校验，采 20 点取中位。</p>
+
+  <div class="chartbox">
+    <h3>各 LED 相对全灭的净增电流</h3>
+    <div style="position:relative;width:100%;height:320px;">
+      <canvas id="c2" role="img" aria-label="条形图：红255 +7.3，黄255 +7.4，绿255 +19.2，红64 +0.6，绿64 +1.9，RGB全亮 +33.6 mA">红255 +7.3，黄255 +7.4，绿255 +19.2，红64 +0.6，绿64 +1.9，RGB全255 +33.6 mA</canvas>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>档位</th><th>中位 (mA)</th><th>净增 (mA)</th><th>avg</th><th>σ</th><th>n</th></tr></thead>
+    <tbody>
+      <tr><td>全灭（基线）</td><td>22.05</td><td>—</td><td>22.11</td><td>1.61</td><td>20</td></tr>
+      <tr><td>红 255</td><td>29.38</td><td>+7.33</td><td>29.41</td><td>1.07</td><td>20</td></tr>
+      <tr><td>黄 255</td><td>29.44</td><td>+7.39</td><td>29.61</td><td>1.01</td><td>20</td></tr>
+      <tr><td>绿 255</td><td>41.22</td><td>+19.18</td><td>41.47</td><td>1.24</td><td>20</td></tr>
+      <tr><td>红 64</td><td>22.68</td><td>+0.64</td><td>23.75</td><td>2.68</td><td>20</td></tr>
+      <tr><td>绿 64</td><td>23.96</td><td>+1.92</td><td>27.21</td><td>6.18</td><td>20</td></tr>
+      <tr class="hl"><td>RGB 全 255</td><td>55.64</td><td>+33.59</td><td>55.87</td><td>0.85</td><td>20</td></tr>
+      <tr><td>全灭（重复，验证基线）</td><td>21.62</td><td>-0.42</td><td>—</td><td>—</td><td>20</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>自洽性检验（这是数据可信的关键证据）：</strong>红 + 黄 + 绿 = 7.33 + 7.39 + 19.18 =
+    <b>33.90 mA</b>，而 RGB 三路同时点亮实测 <b>+33.59 mA</b> —— 两者只差 0.31 mA。
+    基线重复档 22.05 → 21.62（Δ = -0.42 mA），说明这套测法本身很稳。
+  </div>
+
+  <h3>结论</h3>
+  <ul>
+    <li><b>绿灯最费电</b>：255 满亮 +19.2 mA，是红/黄的 2.6 倍。红黄几乎一样（+7.33 / +7.39）。</li>
+    <li><b>低亮度非常省</b>：调到 64（占空比 25%）时，红只有 +0.64 mA、绿 +1.92 mA —— 远低于线性的 25%（理论应该是 +1.8 / +4.8）。低占空比下 LED 的平均电流明显低于按占空比折算的值。</li>
+    <li><b>三路可以叠加</b>：RGB 全亮 = 三者之和，说明三路 LED 与驱动是独立通路，没有共用的限流环节。</li>
+    <li>作为对照，4G 上电时用 MQTT 走固件路径点绿灯 255：中和位 67.03 → 84.30（<b>+17.3 mA</b>），和断电环境下测到的 +19.2 mA 量级一致 —— 两种完全不同的点灯方式（固件 MQTT vs SWD 直写寄存器）结果互证。</li>
+  </ul>
+
+  <h2>3 · MCU 进 WFI 睡眠能省多少</h2>
+
+  <table>
+    <thead><tr><th>状态（4G 已断电，LED 全灭）</th><th>中位</th><th>avg</th><th>σ</th></tr></thead>
+    <tbody>
+      <tr><td>MCU 运行（每圈 <code>__WFI()</code>，SysTick 1ms 唤醒）</td><td>21.70</td><td>21.86</td><td>1.25</td></tr>
+      <tr><td>MCU 深度空闲（<code>g_low_power=1</code>，SysTick 挂起）</td><td>21.54</td><td>21.49</td><td>0.95</td></tr>
+    </tbody>
+  </table>
+
+  <p>差 <b>0.16 mA</b>，等于没有。原因是这块板的主循环<b>每一圈本来就执行 <code>__WFI()</code></b>（SysTick 每 1 ms 唤醒一次做事），
+    CPU 内核已经处在断续工作状态；<code>g_low_power=1</code> 只是把 1 ms 的唤醒也取消掉，能省的动态功耗本来就很小。
+    21.5 mA 的静态电流主体是外设时钟、传感器与板载电路，不是 CPU 内核空转 —— 所以这条路几乎榨不出东西（对比：4G 模组 42.2 mA、绿灯 19.2 mA）。</p>
+
+  <h2>4 · 测量手法（全程不改固件、不烧录）</h2>
+
+  <table>
+    <thead><tr><th>动作</th><th>怎么做的</th></tr></thead>
+    <tbody>
+      <tr><td>4G 断电</td><td>MQTT 真发 <code>{"cmd":"v4g","state":"off","id":"&lt;ICCID&gt;"}</code>（走固件真实路径），再用 SWD 读 <code>GPIOA-&gt;ODR</code> 的 bit3 确认 PA3 真的拉低</td></tr>
+      <tr><td>4G 恢复</td><td>SWD 写 <code>0x40010810</code> = <code>0x08</code>（BSRR 置位 PA3）。<b>不能用 MQTT</b>，模组断电收不到命令</td></tr>
+      <tr><td>LED 切换</td><td>SWD 直写 <code>TIM3-&gt;CCRx</code>（红/黄/绿 = <code>0x40000434/38/3C</code>），每路写后读回校验</td></tr>
+      <tr><td>冻结周期上报</td><td>SWD 写 <code>dtu.c</code> 的 <code>low_power</code>（<code>0x20000584</code>）= 1</td></tr>
+      <tr><td>MCU 深度空闲</td><td>SWD 写 <code>main.c</code> 的 <code>g_low_power</code>（<code>0x2000033D</code>）= 1 → 主循环 <code>HAL_SuspendTick() + __WFI()</code></td></tr>
+      <tr><td>电流读数</td><td><code>mklink power-read --port COM11 --json</code>，每档 20 点 × 1 s</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5 · 踩到的两个 SWD 写入坑（都会让「看起来成功」的写入静默失效）</h2>
+
+  <div class="note warn">
+    <strong>坑 1：残留的串口 HIL 锁会让所有写操作失败。</strong><br>
+    现象：<code>write-ram</code> 返回 <code>Runtime HTTP 500: HIL lock 'transport_usb-serial_COM11' held by pid=37820</code>，
+    而 <code>read-ram</code> 仍然正常 —— 于是读数看着没问题、写入却全部落空（这一轮第一版测试里 4 个 LED 档电流完全一样，就是这个原因）。<br>
+    处置：<code>mklink resources release-all</code>（清掉陈旧锁，它显示 <code>alive=False</code>，是已死进程留下的）。之后写入立刻恢复。
+  </div>
+
+  <div class="note warn">
+    <strong>坑 2：<code>write-ram</code> 多字节写入会因内部回读校验不一致而整体失效。</strong><br>
+    实测把 CCR1 写 <code>0xFF 0x00</code>（2 字节）：工具报 <code>Write completed but verification differed</code>，读回仍然是 <code>0000</code>；<br>
+    改成 1 字节 <code>0xFF</code>：<code>status ok / verified true</code>，读回 <code>ff00</code> = 255 ✓。<br>
+    所以这里所有寄存器/变量写入都改成<b>逐字节写</b>（CCR 高字节本来就是 0，亮度 0–255 只需低字节）。
+    验证过的 1 字节写入：0x40→4000、0xC8→c800、0x01→0100、0xFF→ff00，全部可靠。
+  </div>
+
+  <h2>6 · 局限</h2>
+  <ul>
+    <li>测的是<b>探针 VCC 上的整板总电流</b>，模组 / MCU / LED 混在同一路。想单独测某一路得从硬件上分开供电。</li>
+    <li>低亮度档（红 64 / 绿 64）的 σ 偏大（2.68 / 6.18），绝对值不如满亮档精确；趋势可信，小数位别当真。</li>
+    <li>「MCU 睡眠几乎不省电」这个结论只在<b>这块板 + 这套外设配置</b>下成立，不能外推到别的工程。</li>
+    <li>4G 断电期间固件仍在向 USART1 写心跳/探活（只是没人收），这部分的 MCU 开销没有单独分离。</li>
+  </ul>
+
+</div>
+<script>
+var dark = matchMedia('(prefers-color-scheme: dark)').matches;
+var tick = dark ? '#B4B2A9' : '#5F5E5A';
+var grid = dark ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.07)';
+var lblColor = dark ? '#D3D1C7' : '#444441';
+
+var stackLabel = {
+  id: 'stackLabel',
+  afterDatasetsDraw: function (c) {
+    var ctx = c.ctx; ctx.font = '12px sans-serif'; ctx.fillStyle = lblColor;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    c.data.datasets.forEach(function (ds, di) {
+      c.getDatasetMeta(di).data.forEach(function (el, i) {
+        var v = ds.data[i]; if (!v) return;
+        ctx.fillText(v.toFixed(1), el.x, el.y);
+      });
+    });
+  }
+};
+new Chart(document.getElementById('c1'), {
+  type: 'bar',
+  data: {
+    labels: ['4G 上电', '4G 断电'],
+    datasets: [
+      { label: '4G 模组', data: [42.20, 0], backgroundColor: '#E24B4A', borderRadius: 4, barPercentage: 0.55 },
+      { label: '其余电路', data: [21.96, 21.96], backgroundColor: '#85B7EB', borderRadius: 4, barPercentage: 0.55 }
+    ]
+  },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: function (x) { return x.dataset.label + ': ' + x.parsed.x.toFixed(2) + ' mA'; } } } },
+    scales: {
+      x: { stacked: true, max: 72, ticks: { color: tick, callback: function (v) { return v + ' mA'; } }, grid: { color: grid } },
+      y: { stacked: true, ticks: { color: tick }, grid: { display: false } }
+    }
+  },
+  plugins: [stackLabel]
+});
+
+var barLabel = {
+  id: 'barLabel',
+  afterDatasetsDraw: function (c) {
+    var ctx = c.ctx; ctx.font = '12px sans-serif'; ctx.fillStyle = lblColor;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    c.getDatasetMeta(0).data.forEach(function (el, i) {
+      ctx.fillText('+' + c.data.datasets[0].data[i].toFixed(2), el.x + 6, el.y);
+    });
+  }
+};
+new Chart(document.getElementById('c2'), {
+  type: 'bar',
+  data: {
+    labels: ['红 255', '黄 255', '绿 255', '红 64', '绿 64', 'RGB 全 255'],
+    datasets: [{
+      data: [7.33, 7.39, 19.18, 0.64, 1.92, 33.59],
+      backgroundColor: ['#E24B4A', '#EF9F27', '#639922', '#F09595', '#97C459', '#7F77DD'],
+      borderRadius: 4, barPercentage: 0.7
+    }]
+  },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: function (x) { return '净增 +' + x.parsed.x.toFixed(2) + ' mA'; } } } },
+    scales: {
+      x: { max: 38, ticks: { color: tick, callback: function (v) { return '+' + v + ' mA'; } }, grid: { color: grid } },
+      y: { ticks: { color: tick }, grid: { display: false } }
+    }
+  },
+  plugins: [barLabel]
+});
+</script>
+</body>
+</html>
