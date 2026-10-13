@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>通勤高峰 RTC 窗口调度方案 —— 高峰开 4G + 亮灯，其余进 Stop</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1e2430; --mut:#6b7280; --line:#e5e8ef;
+    --green:#16a34a; --red:#dc2626; --blue:#2563eb; --purple:#7c3aed; --amber:#d97706;
+    --stop:#e1f5ee; --stopb:#0f6e56; --win:#f5c4b3; --winb:#993c1d; --chg:#c0dd97; --chgb:#3b6d11;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 4vw;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.65}
+  h1{font-size:25px;margin:0 0 6px;letter-spacing:.2px}
+  h2{font-size:18px;margin:36px 0 12px;border-left:4px solid var(--blue);padding-left:11px}
+  h3{font-size:15px;margin:18px 0 8px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:14px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .lab{font-size:12px;color:var(--mut)}
+  .kpi .val{font-size:22px;font-weight:700;margin-top:3px}
+  .kpi .val small{font-size:12.5px;font-weight:400;color:var(--mut)}
+  .good{border-left:4px solid var(--green);background:#f0fdf4;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .bad{border-left:4px solid var(--red);background:#fef2f2;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .hl{border-left:4px solid var(--amber);background:#fffbeb;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .info{border-left:4px solid var(--blue);background:#eff6ff;border-radius:8px;padding:12px 15px;margin:11px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .mut{color:var(--mut);font-size:12.5px}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.6px;
+       font-family:"Cascadia Code",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.6px;line-height:1.55}
+  svg{max-width:100%;height:auto}
+  /* ---------- 24h 时轴（纯 CSS，宽度即真实时长占比） ---------- */
+  .sched{display:flex;height:46px;border-radius:9px;overflow:hidden;border:1px solid var(--line);margin:14px 0 6px}
+  .seg{position:relative;display:flex;align-items:center;justify-content:center;
+       font-size:11.5px;white-space:nowrap;overflow:hidden}
+  .seg.stop{background:var(--stop);color:#085041}
+  .seg.win{background:var(--win);color:#712b13;font-weight:700}
+  .seg.chg{background:var(--chg);color:#27500a}
+  .ticks{display:flex;font-size:11px;color:var(--mut);margin-bottom:4px}
+  .ticks span{flex:1}
+  .ticks span:last-child{flex:0 0 auto}
+  /* ---------- 水平对比条 ---------- */
+  .hbar{display:flex;align-items:center;gap:10px;margin:7px 0;font-size:12.5px}
+  .hbar .nm{flex:0 0 132px;color:var(--mut);text-align:right}
+  .hbar .tr{flex:1;background:#f1f5f9;border-radius:6px;overflow:hidden;height:20px}
+  .hbar .fl{height:100%;border-radius:6px}
+  .hbar .vv{flex:0 0 96px;font-variant-numeric:tabular-nums}
+  .f-stop{background:#5dcaa5}
+  .f-win{background:#d85a30}
+  .f-chg{background:#97c459}
+  .f-alt{background:#85b7eb}
+  .ul{margin:8px 0 0 18px;padding:0}
+  .ul li{margin:4px 0}
+</style>
+</head>
+<body>
+
+<h1>通勤高峰 RTC 窗口调度方案</h1>
+<div class="sub">
+  2026-10-13 · 车牌 ver2（STM32F103 @8 MHz + 银尔达 YED_DTU4 透传 + CN3142 太阳能充电）· 电池 <b>1000 mAh</b><br>
+  目标：<b>只在上下班高峰（07–09 + 17–19）开 4G + 亮灯，其余时间进 Stop</b>；本页图表为纯 CSS/SVG，无外部 CDN<br>
+  数据源：F-11 真值电流实测（<code>power-consumption-report-v2-corrected.html</code>、<code>lpcycle-power-time-verify.html</code>）
+  + 充电侧实测（《DP 供电 + FZ35 加载扫描报告》场景 C 口径）
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="lab">睡态（Stop）</div><div class="val" style="color:var(--green)">0.226 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">高峰窗口均值</div><div class="val">51.6 <small>mA</small></div></div>
+  <div class="kpi"><div class="lab">日耗电</div><div class="val">211 <small>mAh</small></div></div>
+  <div class="kpi"><div class="lab">最坏点 09:00</div><div class="val" style="color:var(--amber)">−105 <small>mAh</small></div></div>
+  <div class="kpi"><div class="lab">日终净电量</div><div class="val" style="color:var(--green)">+202 <small>mAh</small></div></div>
+  <div class="kpi"><div class="lab">无光续航</div><div class="val">3.8 <small>天</small></div></div>
+</div>
+
+<h2>0. 结论先说</h2>
+<div class="card">
+  <div class="good">
+    <b>① 进 Stop，不用 Sleep。</b>
+    Stop 实测 <b>0.226 mA</b>，旧的低功耗 Sleep 模式是 <b>2.22 mA</b>（差 1.99 mA，因为 Sleep 只停内核时钟、HSE 与 AHB/APB 照跑）。
+    20 h 空闲段：Stop 只烧 <b>4.5 mAh</b>，Sleep 要烧 <b>44.4 mAh</b> —— 一天白送 40 mAh，没有任何好处。
+    而且 RTC 闹钟走 EXTI17，<b>本来就只能唤醒 Stop</b>，Sleep 反而用不上这套机制。
+  </div>
+  <div class="good">
+    <b>② 窗口内的引擎不用新写，直接复用已验证的 lp_cycle。</b>
+    现有循环已经是「睡 → RTC 闹钟醒 → 联网/授时/上报 → 关 4G → 再睡」，实测 Stop 0.226 mA、每轮醒窗耗 4840 mA·s。
+    这次要加的<b>只是「到什么钟点开关窗」这一层判断</b>。
+  </div>
+  <div class="info">
+    <b>③ <code>rtc_app.c</code> 一行都不用改。</b>
+    <code>RTC_APP_ArmIn(delay_s)</code> 的参数是 32 位秒，最长 12 h 的长睡（43200 s）远在量程内，
+    ALR 比较值 = 当前计数 + delay，不存在 24 h 回绕问题。
+  </div>
+  <div class="info">
+    <b>④ 1000 mAh 对这个方案余量很大。</b>
+    最坏点（早上 09:00、发电开始前）只亏 105 mAh ≈ <b>10.5% 放电深度</b>；
+    日终反而净涨 202 mAh；连阴雨 3.8 天也扛得住。
+  </div>
+</div>
+
+<h2>1. Stop 还是 Sleep —— 决策依据</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>对比项</th><th>Stop（本方案，lp_cycle）</th><th>Sleep（旧 <code>g_low_power</code> 模式）</th></tr></thead>
+    <tbody>
+      <tr><td>实测电流（F-11 真值）</td><td class="num"><b>0.226 mA</b></td><td class="num">2.22 mA</td></tr>
+      <tr><td>20 h 空闲段耗电</td><td class="num"><b>4.5 mAh</b></td><td class="num">44.4 mAh</td></tr>
+      <tr><td>时钟域</td><td>HSE 停、内核停、AHB/APB 断电</td><td>仅内核停，HSE 与 AHB/APB 照跑</td></tr>
+      <tr><td>唤醒源</td><td><b>RTC 闹钟 EXTI17</b>（唯一）</td><td>任意中断</td></tr>
+      <tr><td>唤醒延迟</td><td>ms 级 + 须重跑 <code>SystemClock_Config()</code>（已修，否则波特率全错）</td><td>ms 级，时钟无需重配</td></tr>
+      <tr><td>RAM / 变量保持</td><td>保持（SRAM 不掉）</td><td>保持</td></tr>
+      <tr><td>本项目适用性</td><td><b>✅ 采用</b></td><td>❌ 弃用（省不下电，还占着模拟外设）</td></tr>
+    </tbody>
+  </table>
+  <p class="mut" style="margin-bottom:0">
+    补充：只有「需要几十微秒内被非 RTC 事件唤醒」才值得用 Sleep。本方案最短的睡段也是 60 s 级，Stop 的唤醒开销完全可忽略。
+  </p>
+</div>
+
+<h2>2. 24 小时时轴与电量账本</h2>
+<div class="card">
+  <div class="ticks"><span>00:00</span><span>04:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span><span>24:00</span></div>
+  <div class="sched">
+    <div class="seg stop" style="width:29.17%">Stop 0.226 mA</div>
+    <div class="seg win"  style="width:8.33%">窗口1</div>
+    <div class="seg chg"  style="width:12.5%">强照充电</div>
+    <div class="seg stop" style="width:20.83%">Stop 0.226 mA</div>
+    <div class="seg win"  style="width:8.33%">窗口2</div>
+    <div class="seg stop" style="width:20.83%">Stop 0.226 mA</div>
+  </div>
+  <table>
+    <thead><tr><th>时段</th><th>时长</th><th>状态</th><th class="num">净电流</th><th class="num">电量变化</th><th class="num">累计</th></tr></thead>
+    <tbody>
+      <tr><td>00:00–07:00</td><td>7 h</td><td>Stop（RTC 长睡）</td><td class="num">−0.226 mA</td><td class="num">−1.6</td><td class="num">−1.6</td></tr>
+      <tr><td><b>07:00–09:00</b></td><td>2 h</td><td><b>早高峰窗口</b>：4G 周期上报 + 亮灯</td><td class="num">−51.6 mA</td><td class="num">−103.2</td><td class="num" style="color:var(--red)"><b>−104.8</b></td></tr>
+      <tr><td>09:00–12:00</td><td>3 h</td><td>强照充电（报告实测净口径）</td><td class="num" style="color:var(--green)">+138 mA</td><td class="num" style="color:var(--green)">+413</td><td class="num">+308.2</td></tr>
+      <tr><td>12:00–17:00</td><td>5 h</td><td>Stop</td><td class="num">−0.226 mA</td><td class="num">−1.1</td><td class="num">+307.1</td></tr>
+      <tr><td><b>17:00–19:00</b></td><td>2 h</td><td><b>晚高峰窗口</b>：4G 周期上报 + 亮灯</td><td class="num">−51.6 mA</td><td class="num">−103.2</td><td class="num">+203.9</td></tr>
+      <tr><td>19:00–24:00</td><td>5 h</td><td>Stop</td><td class="num">−0.226 mA</td><td class="num">−1.1</td><td class="num" style="color:var(--green)"><b>+202.8</b></td></tr>
+    </tbody>
+  </table>
+  <p class="mut" style="margin-bottom:0">
+    窗口均值 51.6 mA = 4G 周期上报 31.4 mA + 绿灯 255 净增 20.2 mA；Stop 段 0.226 mA。
+    按 1000 mAh 电池：最坏点 <b>−105 mAh = 10.5% 放电深度</b>；日耗 211 mAh，
+    无光续航 = 800 mAh（80% 可用）÷ 211 ≈ <b>3.8 天</b>。
+  </p>
+</div>
+
+<h2>3. 调度机制（在现有 lp_cycle 上加一层窗口判断）</h2>
+<div class="card">
+  <svg viewBox="0 0 680 250" role="img">
+    <title>RTC 窗口调度流程</title>
+    <desc>Stop 睡到 RTC 闹钟，唤醒后开会话上报并授时，收尾时判断是否仍在窗口内，决定短睡还是长睡到下一窗口起点</desc>
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </marker>
+    </defs>
+    <rect x="30" y="30" width="150" height="52" rx="10" fill="#e1f5ee" stroke="#0f6e56" stroke-width="0.5"/>
+    <text x="105" y="48" font-size="13" font-weight="500" fill="#085041" text-anchor="middle">Stop 睡</text>
+    <text x="105" y="66" font-size="11" fill="#0f6e56" text-anchor="middle">0.226 mA / 4G 断电</text>
+    <line x1="180" y1="56" x2="228" y2="56" stroke="#5f5e5a" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="204" y="46" font-size="11" fill="#5f5e5a" text-anchor="middle">ALR 到期</text>
+    <rect x="232" y="30" width="170" height="52" rx="10" fill="#e6f1fb" stroke="#185fa5" stroke-width="0.5"/>
+    <text x="317" y="48" font-size="13" font-weight="500" fill="#0c447c" text-anchor="middle">唤醒会话 ≈90 s</text>
+    <text x="317" y="66" font-size="11" fill="#185fa5" text-anchor="middle">4G 上电 · nettime · 上报</text>
+    <line x1="402" y1="56" x2="450" y2="56" stroke="#5f5e5a" stroke-width="1.5" marker-end="url(#ar)"/>
+    <rect x="454" y="30" width="196" height="52" rx="10" fill="#faeeda" stroke="#854f0b" stroke-width="0.5"/>
+    <text x="552" y="48" font-size="13" font-weight="500" fill="#633806" text-anchor="middle">LP_CloseAndSleep()</text>
+    <text x="552" y="66" font-size="11" fill="#854f0b" text-anchor="middle">授时 → 关 4G → 挂闹钟</text>
+    <line x1="552" y1="82" x2="552" y2="112" stroke="#5f5e5a" stroke-width="1.5" marker-end="url(#ar)"/>
+    <rect x="452" y="116" width="200" height="46" rx="10" fill="#f1efe8" stroke="#5f5e5a" stroke-width="0.5"/>
+    <text x="552" y="132" font-size="13" font-weight="500" fill="#2c2c2a" text-anchor="middle">当前时刻还在窗口内？</text>
+    <text x="552" y="150" font-size="11" fill="#5f5e5a" text-anchor="middle">用 RTC epoch 换算到分钟比较</text>
+    <line x1="452" y1="139" x2="332" y2="139" stroke="#3b6d11" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="392" y="130" font-size="11" fill="#3b6d11" text-anchor="middle">是 → 短睡</text>
+    <rect x="120" y="116" width="210" height="46" rx="10" fill="#eaf3de" stroke="#3b6d11" stroke-width="0.5"/>
+    <text x="225" y="132" font-size="13" font-weight="500" fill="#27500a" text-anchor="middle">ArmIn(period − 95 s)</text>
+    <text x="225" y="150" font-size="11" fill="#3b6d11" text-anchor="middle">下一轮上报（真实间隔 = period）</text>
+    <line x1="552" y1="162" x2="552" y2="192" stroke="#993c1d" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="600" y="182" font-size="11" fill="#993c1d" text-anchor="middle">否 → 长睡</text>
+    <rect x="372" y="196" width="230" height="46" rx="10" fill="#f5c4b3" stroke="#993c1d" stroke-width="0.5"/>
+    <text x="487" y="212" font-size="13" font-weight="500" fill="#712b13" text-anchor="middle">LED_AllOff() + ArmIn(到下一窗口起点)</text>
+    <text x="487" y="230" font-size="11" fill="#993c1d" text-anchor="middle">最长 12 h，一觉睡到 17:00 或次日 07:00</text>
+    <line x1="372" y1="219" x2="112" y2="219" stroke="#0f6e56" stroke-width="0.5" stroke-dasharray="4 4" marker-end="url(#ar)"/>
+    <line x1="105" y1="219" x2="105" y2="86" stroke="#0f6e56" stroke-width="0.5" stroke-dasharray="4 4" marker-end="url(#ar)"/>
+    <text x="210" y="240" font-size="11" fill="#0f6e56" text-anchor="middle">回到 Stop；进窗时先 LED_SetColor()</text>
+  </svg>
+
+  <h3>收尾处的伪代码（改动集中在这一处）</h3>
+<pre>/* main.c LP_CloseAndSleep() —— 原第 223 行是 RTC_APP_ArmIn(g_lp_period_s) */
+static uint32_t sched_next_wake(void)
+{
+    uint32_t now = RTC_APP_GetEpoch();          /* UTC 秒 */
+    uint32_t tod = (now + 8 * 3600u) % 86400u;  /* 北京时：当天第几秒 */
+    uint16_t m   = (uint16_t)(tod / 60u);       /* 当天第几分钟 */
+
+    if (sched_in_window(m))                     /* 窗内：按 period 报下一轮 */
+        return (g_lp_period_s &gt; 95u) ? (g_lp_period_s - 95u) : 1u;
+
+    LED_AllOff();                               /* 出窗即灭灯 */
+    uint32_t nxt = sched_next_window_start(m);  /* 下一个 on 点（分钟） */
+    uint32_t delta = (nxt &gt; m) ? (nxt - m) * 60u
+                                : (nxt + 1440u - m) * 60u;
+    return (delta &lt; 60u) ? 60u : delta;         /* 与 now 的秒级误差兜底 */
+}
+/* 唤醒后：进窗 → LED_SetColor(g_sched.led, g_sched.bright)；否则保持全灭 */</pre>
+  <p class="mut" style="margin-bottom:0">
+    注意 <code>−95</code>：现有 <code>period_min</code> 的语义是「睡眠时长」而不是「上报周期」
+    （挂闹钟挂在收尾序列最末尾，会话本身约 95 s），所以 <code>period_min=1</code> 时真实间隔其实 ≈155 s。
+    顺手改成减法，才能让「窗口内每 60 s 上报一次」成立。
+  </p>
+</div>
+
+<h2>4. 怎么配：指令与配置存储</h2>
+<div class="card">
+<pre>{"cmd":"lp_sched","on1":"07:00","off1":"09:00",
+                 "on2":"17:00","off2":"19:00",
+                 "period_min":1,"led":"G","bright":255}
+{"cmd":"lp_sched_off"}          /* 退回常在线；{"cmd":"lp_cycle",...} 仍是纯周期模式 */</pre>
+  <table>
+    <thead><tr><th>字段</th><th>含义</th><th>缺省</th><th>备注</th></tr></thead>
+    <tbody>
+      <tr><td><code>on1/off1</code> <code>on2/off2</code></td><td>两段高峰窗口（北京时间 HH:MM）</td><td>07:00–09:00 / 17:00–19:00</td><td>支持跨零点（off &lt; on 时按次日）</td></tr>
+      <tr><td><code>period_min</code></td><td>窗口内上报周期（分钟）</td><td>1</td><td>1 = 每 60 s 上报一次</td></tr>
+      <tr><td><code>led</code> / <code>bright</code></td><td>窗口内亮哪路、多亮</td><td>G / 255</td><td>R/Y/G；亮度 0–255 线性</td></tr>
+    </tbody>
+  </table>
+  <h3>存储位置</h3>
+  <ul class="ul">
+    <li><b>首选普通静态变量</b>：Stop 期间 SRAM 保持，窗口配置天然不丢；只在复位后回到缺省。</li>
+    <li><b>要抗复位就写 BKP 寄存器</b>（VBAT 域，<code>BKP-&gt;DR1..DR6</code>）：起止时间各存「当天分钟数」（uint16 ×4）+ period/led/bright 各一，
+      6 个 16 位寄存器够用；写前需 <code>HAL_PWR_EnableBkUpAccess()</code>（<code>RTC_APP_Init()</code> 里已经做了）。</li>
+    <li><b>时间有效性</b>：开机若 <code>RTC_APP_GetEpoch()</code> 明显不合理（小于编译日期），说明换过电池/掉过 VBAT
+      ⇒ 先联网跑一次 nettime 授时，<b>授时成功前不要进调度</b>，否则窗口判断全是错的。</li>
+  </ul>
+</div>
+
+<h2>5. 代码改动清单</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>文件</th><th>改什么</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="5"><code>Core/Src/main.c</code></td><td>新增 <code>g_sched</code> 配置结构 + <code>sched_in_window()</code> / <code>sched_next_window_start()</code></td><td>分钟制比较，逻辑集中、便于单测</td></tr>
+      <tr><td><code>LP_CloseAndSleep()</code>（第 188 行）里的 <code>RTC_APP_ArmIn(g_lp_period_s)</code> 换成 <code>sched_next_wake()</code></td><td>第 223 行；<code>g_lp_cycle</code> 与 <code>s_lp_state</code> 状态机不动</td></tr>
+      <tr><td>新增指令解析 <code>lp_sched</code> / <code>lp_sched_off</code></td><td>紧随现有 <code>lp_cycle</code> 分支（第 516 行附近）</td></tr>
+      <tr><td>进窗/出窗调 <code>LED_SetColor()</code> / <code>LED_AllOff()</code></td><td>API 现成，见 <code>board_io.h</code>；三路 PWM 由 TIM3 硬件输出，不吃 CPU</td></tr>
+      <tr><td>开机时钟有效性检查</td><td>无效 → 先授时一次再进调度</td></tr>
+      <tr><td><code>Core/Inc/rtc_app.h</code><br><code>Core/Src/rtc_app.c</code></td><td><b>不用改</b></td><td><code>RTC_APP_ArmIn(delay_s)</code> 已够（≤12 h）；<code>GetEpoch/SetEpoch/ParseNettime</code> 均在</td></tr>
+      <tr><td><code>Core/Inc/board_io.h</code></td><td><b>不用改</b></td><td><code>LED_SetColor/LED_AllOff</code> 已有</td></tr>
+    </tbody>
+  </table>
+  <div class="hl" style="margin-bottom:0">
+    <b>改动量很小：</b>核心就是一个新函数 <code>sched_next_wake()</code> + 一段指令解析，其余全是复用。
+    先不写 BKP 持久化也能跑（配置复位后回缺省）。
+  </div>
+</div>
+
+<h2>6. 与充电侧报告的假设对比</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>口径</th><th class="num">《DP 扫描报告》场景 C</th><th class="num">本方案（B + 绿灯 255）</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>休眠电流</td><td class="num">1 mA</td><td class="num"><b>0.226 mA</b></td><td>Stop 实测；空占比报告假设好 4.4 倍</td></tr>
+      <tr><td>高峰段平均电流</td><td class="num">61.7 mA</td><td class="num"><b>51.6 mA</b></td><td>报告按「83% 保活 50 mA + 17% 发送 120 mA」估；我们每圈断电更省</td></tr>
+      <tr><td>日总耗电</td><td class="num">267 mAh</td><td class="num"><b>211 mAh</b></td><td>少 56 mAh/天</td></tr>
+      <tr><td>最坏点（09:00）</td><td class="num">−130 mAh</td><td class="num"><b>−105 mAh</b></td><td>1000 mAh 下 = 13% → <b>10.5%</b> 放电深度</td></tr>
+      <tr><td>日终净电量</td><td class="num">+146 mAh</td><td class="num"><b>+202 mAh</b></td><td>均在「3.0 h 日照 + 600 mW 面板 + η 84.9%」口径下</td></tr>
+    </tbody>
+  </table>
+  <h3>日耗构成（1000 mAh 口径）</h3>
+  <div class="hbar"><span class="nm">窗口 4 h × 51.6</span><span class="tr"><span class="fl f-win" style="width:97.6%"></span></span><span class="vv">206 mAh</span></div>
+  <div class="hbar"><span class="nm">Stop 20 h × 0.226</span><span class="tr"><span class="fl f-stop" style="width:2.1%"></span></span><span class="vv">4.5 mAh</span></div>
+  <div class="hbar"><span class="nm">强照充电 3 h</span><span class="tr"><span class="fl f-chg" style="width:100%"></span></span><span class="vv">−413 mAh</span></div>
+  <p class="mut" style="margin-bottom:0">
+    报告的「电芯选型」是按 800 mAh 算的（无光 2.4 天、最坏点 20% DoD）。你手上 1000 mAh 更宽松：
+    <b>3.8 天无光续航、10.5% 最坏点</b>。报告「三个保留」里对小电流效率的担心仍然成立（84.9% 只能当上界），
+    以及晚高峰电池电压下坠会压低 4G 瞬时脉冲的余量 —— 这两条不影响本方案的结论方向。
+  </p>
+</div>
+
+<h2>7. 窗口内两种策略：先 B，A 留作对照</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>策略</th><th class="num">窗口平均电流</th><th class="num">4 h 窗口耗电</th><th>上报间隔</th><th>风险</th></tr></thead>
+    <tbody>
+      <tr><td><b>B · 每圈断电重连</b><br>（复用 lp_cycle，本方案采用）</td><td class="num">31.4 mA<br><span class="mut">+ 绿灯 = 51.6</span></td><td class="num">206 mAh</td><td>≈ period + 95 s（修语义后 = period）</td><td>无 —— 已实机验证 5 组采集一致</td></tr>
+      <tr><td>A · 窗内保持连接<br>（不关模组，只关/开灯）</td><td class="num">≈16 mA<br><span class="mut">+ 绿灯 = 36.2</span></td><td class="num">145 mAh</td><td>可到 60 s 甚至更密</td><td>依赖 DTU 长时间不掉线；探活误判那套坑需重验</td></tr>
+    </tbody>
+  </table>
+  <p class="mut" style="margin-bottom:0">
+    A 的省电来源是省掉「每圈重新注网」的开销；代价是把「链路是否还活着」变成必须信任的假设。
+    建议：先用 B 上线跑通窗口调度，再单独做一轮 A 的对照实验（同窗口、同亮度、F-11 真值），再决定是否切换。
+  </p>
+</div>
+
+<h2>8. 坑与注意事项</h2>
+<div class="card">
+  <div class="bad"><b>① 换电池后 RTC 时间会丢。</b>RTC 是 VBAT 域，但主电池就是它唯一的电源来源。开机必须判「时间是否合理」，不合理先联网 nettime 一次；<b>授时成功前不要按窗口调度睡长觉</b>，否则可能一觉睡 12 h 不醒。</div>
+  <div class="hl"><b>② <code>period_min</code> 语义 = 睡眠时长，不是上报周期</b>（真实间隔 = period + 95 s）。窗口内要 60 s 上报就必须先做那个 <code>−95</code> 修正，否则实际是 155 s。</div>
+  <div class="hl"><b>③ 4G 上电浪涌 ≈1.2 A（脉冲）。</b>每圈重新上电都会来一次，VCC 就近并 <b>470 µF</b> 的量不能省；电池侧走线尽量短粗，避免第一圈注网时压降触发模组低压复位。</div>
+  <div class="info"><b>④ 亮灯窗口建议与高峰解耦。</b>冬天 17:00 天已黑，晚高峰亮灯合理；早高峰 07:00–09:00 是否要亮可另配一段独立时间窗。绿灯 255 净增 20.2 mA，要省电就降到 128（+11.1 mA），亮度是线性的。</div>
+  <div class="info"><b>⑤ 阴雨天的兜底是电池不是面板。</b>掉到 1 h 日照时全天只剩 138 mAh，本方案日耗 211 mAh 就要吃老本 —— 1000 mAh 有 3.8 天缓冲，够用，但别忘了这条。</div>
+</div>
+
+<h2>9. 依据与复现</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>关键实测值（F-11 真值，中位）</th><th class="num">电流</th><th>出处</th></tr></thead>
+    <tbody>
+      <tr><td>Stop 睡态（lp_cycle 睡段）</td><td class="num"><b>0.226 mA</b></td><td><code>docs/lpcycle-power-time-verify.html</code></td></tr>
+      <tr><td>4G 断电 · 8 MHz Run · LED 全灭</td><td class="num">2.30 mA</td><td><code>docs/power-consumption-report-v2-corrected.html</code></td></tr>
+      <tr><td>lp_cycle 每轮醒窗电荷 / 均值（period=60 s）</td><td class="num">4840 mA·s / 31.4 mA</td><td>同上</td></tr>
+      <tr><td>连接但心跳关（模组 DRX 空闲）</td><td class="num">14.3–14.9 mA</td><td>同上</td></tr>
+      <tr><td>持续在线（心跳开）</td><td class="num">58.7 mA</td><td>同上</td></tr>
+      <tr><td>绿灯 255 / 128 净增（相对 4G 断基线）</td><td class="num">+20.2 / +11.1 mA</td><td>同上</td></tr>
+      <tr><td>旧 Sleep 模式</td><td class="num">2.22 mA</td><td><code>docs/low-power-verify-3point.html</code> 分层实测</td></tr>
+      <tr><td>面板 2×(6 V/50 mA)、η 84.9%、3.0 h 日照 → 413 mAh/天</td><td class="num">—</td><td>《DP 供电 + FZ35 加载（充电侧）扫描报告》§七、§八</td></tr>
+    </tbody>
+  </table>
+  <p class="mut" style="margin-bottom:0">
+    方案要点亦已写入项目日志 <code>.workbuddy/memory/2026-10-13.md</code>（18:40 节）。固件尚未实现，本页是设计基线。
+  </p>
+</div>
+
+</body>
+</html>

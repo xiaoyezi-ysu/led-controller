@@ -1,0 +1,5 @@
+# 滚动采集数据不入库（体量大、每次都变）
+# 需要留档的原始数据请复制到 docs/（GitHub Pages 发布目录）
+data/
+*.baiduyun.uploading.cfg
+__pycache__/

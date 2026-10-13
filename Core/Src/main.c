@@ -184,8 +184,10 @@ static int json_int(const char *json, const char *key, int def, int lo, int hi)
 
 /* 会话收尾（阻塞 ≈6s，时序不敏感）：
    等 ACK 发完 → +++ 进指令模式 → config,get,nettime 授时（~1.5s，无应答跳过）
-   → AT+ENTM 回透传 → 挂 RTC 闹钟 → 关 4G → 进睡眠标志（主循环下一个 WFI 即 Stop） */
-static void LP_CloseAndSleep(void)
+   → AT+ENTM 回透传 → 挂 RTC 闹钟 → 关 4G → 进睡眠标志（主循环下一个 WFI 即 Stop）
+   sleep_s: RTC 闹钟秒数（常规 lp_cycle = g_lp_period_s）
+   led_off: 1 = 收尾灭灯（常规）；0 = 保持点灯（工况测试的「窗口轮」最坏组合档） */
+static void LP_CloseAndSleepEx(uint32_t sleep_s, uint8_t led_off)
 {
   /* 等 ACK 队列发完（最多 1.5s）。注意此时主循环被本函数阻塞，
      ACK 必须就地发送，不能指望主循环——否则 ACK 永远发不出去。 */
@@ -220,23 +222,401 @@ static void LP_CloseAndSleep(void)
   HAL_Delay(300);
 
   /* 挂闹钟（对表之后，闹钟基于最新计数） */
-  if (RTC_APP_ArmIn(g_lp_period_s) != 0)
+  if (RTC_APP_ArmIn(sleep_s) != 0)
   {
     printf("LP: RTC NOT ready -> abort cycle, stay online\r\n");
     g_lp_cycle = 0;
     s_lp_state = 0;
     return;
   }
-  printf("LP: alarm armed +%us, entering Stop (4G cut)\r\n", g_lp_period_s);
+  printf("LP: alarm armed +%us, entering Stop (4G cut)\r\n", (unsigned)sleep_s);
 
   /* 关 4G、清接收态、置睡眠标志；主循环顶部 WFI 即进 Stop */
   V4G_Set(0);
   json_len = 0; json_ready = 0;
   rbuf_rd = rbuf_wr;
-  LED_AllOff();
+  if (led_off) LED_AllOff();
   g_low_power = 1;
   DTU_SetLowPower(1);
   s_lp_state = 3;
+}
+
+/* lp_cycle 常规收尾：睡 g_lp_period_s 秒、灭灯 */
+static void LP_CloseAndSleep(void)
+{
+  LP_CloseAndSleepEx(g_lp_period_s, 1);
+}
+
+/* ===== 工况测试引擎（bench test）=========================================
+   目的：把「一整天的不同工况」压进一次 F-11 连续采样里跑完。
+   入口：PC 串口（USART3）发一行 '!' 起头的命令
+       !seq 60               内置 13 档工况表（常规档 60s，4G 重档 ×2）
+       !day 30 3 G 255       压缩日：窗口外压到 30s、窗口内 3 轮真联网、绿灯 255
+       !stop                 中止测试，回常在线
+       !help                 帮助
+
+   为什么走 PC 串口而不是 MQTT：MQTT 侧任何被识别的指令都会命中主循环里的
+   g_low_power = 0; DTU_SetLowPower(0)，顺手把被测状态清掉（v2 报告里 LED 档
+   读数偏高的根因）。PC 通道完全不碰 DTU，置态干净。
+
+   每档进入时打印一行 ASCII 标记（供出图脚本自动分段标注）：
+       SEQ,<索引>,<名称>,<标称秒>,<tick_ms>
+   与本机 F-11 的 CSV 按时间戳对齐。 ======================================== */
+
+#define SEQ_MAX_STEPS   16
+#define SEQ_WIN_ROUND_S 155u   /* 窗口整轮标称 = 会话 90 + 收尾 ≈5 + 睡 60 */
+
+/* 步类型 */
+enum {
+  SEQK_V4G_OFF = 0,   /* 4G 断电 + 灯灭（Run 对照基线） */
+  SEQK_V4G_ON,        /* 4G 上电注网 */
+  SEQK_LED,           /* 只动灯，4G 态保持 */
+  SEQK_HB_ON,         /* 在线 + 心跳/探活开 */
+  SEQK_HB_OFF,        /* 在线 + 心跳/探活关（4G 仍供电，DTU_SetLowPower(1)） */
+  SEQK_LP_ROUND,      /* 真 lp_cycle 一轮：会话 90s → 收尾 → Stop sleep_s */
+  SEQK_SLEEP          /* 纯 Stop 睡 sleep_s（4G 断、灯灭、无会话） */
+};
+
+typedef struct {
+  const char *name;     /* ASCII 短名（打印/出图分段） */
+  uint16_t    dwell_s;  /* 标称驻留（SLEEP / LP_ROUND 步为标称总时长） */
+  uint16_t    sleep_s;  /* SLEEP / LP_ROUND：RTC 睡眠秒数 */
+  uint8_t     kind;
+  uint8_t     led;      /* LED_COLOR_*；0xFF = 灭 */
+  uint8_t     bright;
+} seq_step_t;
+
+/* 内置 13 档工况表：合计约 1185s ≈ 20min（见 docs/rtc-commute-window-schedule.html） */
+static const seq_step_t SEQ_TABLE[] = {
+  { "v4goff_dark",  60,                  0, SEQK_V4G_OFF, 0xFF,                0 },
+  { "v4goff_G255",  60,                  0, SEQK_LED,     LED_COLOR_GREEN,   255 },
+  { "v4goff_G128",  60,                  0, SEQK_LED,     LED_COLOR_GREEN,   128 },
+  { "v4goff_R255",  60,                  0, SEQK_LED,     LED_COLOR_RED,     255 },
+  { "v4goff_Y255",  60,                  0, SEQK_LED,     LED_COLOR_YELLOW,  255 },
+  { "v4goff_R64",   60,                  0, SEQK_LED,     LED_COLOR_RED,      64 },
+  { "v4gon_reg",   120,                  0, SEQK_V4G_ON,  0xFF,                0 },
+  { "online_hb",   120,                  0, SEQK_HB_ON,   0xFF,                0 },
+  { "online_idle",  60,                  0, SEQK_HB_OFF,  0xFF,                0 },
+  { "round_dark",  SEQ_WIN_ROUND_S,     60, SEQK_LP_ROUND, 0xFF,               0 },
+  { "round_G255",  SEQ_WIN_ROUND_S,     60, SEQK_LP_ROUND, LED_COLOR_GREEN,   255 },
+  { "round_G128",  SEQ_WIN_ROUND_S,     60, SEQK_LP_ROUND, LED_COLOR_GREEN,   128 },
+  { "v4goff_end",   60,                  0, SEQK_V4G_OFF, 0xFF,                0 },
+};
+#define SEQ_TABLE_N (sizeof(SEQ_TABLE) / sizeof(SEQ_TABLE[0]))
+
+/* 运行时副本（!seq 允许改常规档驻留，表本身是 const） */
+static seq_step_t SEQ_RUN[SEQ_MAX_STEPS];
+static seq_step_t SEQ_DAY[SEQ_MAX_STEPS];
+static char       seq_name_pool[SEQ_MAX_STEPS][16];
+
+static seq_step_t *s_seq_tab = SEQ_RUN;
+static uint8_t  s_seq_n    = 0;    /* 步数 */
+static uint8_t  s_seq_i    = 0;    /* 当前步 */
+static uint8_t  s_seq_run  = 0;    /* 1 = 测试进行中 */
+static uint8_t  s_seq_stop = 0;    /* 1 = 已挂闹钟，主循环顶部进 Stop */
+static uint8_t  s_seq_wait = 0;    /* 1 = 正在 Stop，等 RTC 唤醒后推进 */
+static uint32_t s_seq_t0   = 0;    /* 本步进入时刻 */
+static uint16_t s_seq_dwell = 0;   /* 本步标称驻留（秒） */
+static uint16_t s_seq_sleep = 0;   /* 本步 RTC 睡眠秒数 */
+static uint8_t  s_seq_round = 0;   /* LP_ROUND 子状态：0 无 / 1 会话中 / 2 待收尾 */
+static uint32_t s_seq_rt0   = 0;   /* LP_ROUND 会话起点 */
+static uint8_t  s_seq_reported = 0;
+
+/* PC '!' 命令行缓冲（ISR 填、主循环消费） */
+static char     pc_cmd[48];
+static uint8_t  pc_cmd_len  = 0;
+static uint8_t  pc_cmd_mode = 0;
+volatile uint8_t pc_cmd_ready = 0;
+
+/* ---- SWD 注入通道 + RAM 标记日志（没有 PC 串口时用脚本直接写/读 RAM）----
+   bench/bench_swd.py 用 OpenOCD 的 mww/mdw 做两件事：
+     ① 写 g_test_cmd[]（不含前导 '!'）+ g_test_go=1 → 主循环调 SEQ_HandleCmd()
+     ② 回读 g_slog（每步的名称 / 步号 / 进入时刻）→ 与 F-11 曲线对齐
+   时标选 RTC 秒计数：Stop 期间 SysTick 被挂起会冻结，而 RTC（LSE / VBAT 域）
+   一直在走，所以它是本测试里唯一能跨 Stop 的时间基准。
+   与 PC 串口通道互不干扰：两条路径都只是喂给同一个 SEQ_HandleCmd()。 */
+volatile char    g_test_cmd[48] __attribute__((aligned(4)));
+volatile uint8_t g_test_go      __attribute__((aligned(4)));
+
+#define SEQ_LOG_N 24
+typedef struct {
+  uint8_t  n;                   /* 已记录步数 */
+  uint8_t  done;                /* 1 = 序列跑完 */
+  uint8_t  ix[SEQ_LOG_N];       /* 步号 */
+  uint8_t  pad[2];
+  uint32_t rtc[SEQ_LOG_N];      /* 进入该步时的 RTC 秒计数 */
+  char     name[SEQ_LOG_N][16]; /* 步名（ASCII），供脚本直接回读 */
+} seq_log_t;
+volatile seq_log_t g_slog __attribute__((aligned(4)));
+
+/* 进入第 i 步：置态 + 记录标记 + 打印 */
+static void SEQ_Enter(uint8_t i)
+{
+  const seq_step_t *st = &s_seq_tab[i];
+
+  s_seq_i     = i;
+  s_seq_t0    = HAL_GetTick();
+  s_seq_stop  = 0;
+  s_seq_wait  = 0;
+  s_seq_round = 0;
+  s_seq_dwell = st->dwell_s;
+  s_seq_sleep = st->sleep_s;
+
+  /* 标记日志：先记录再置态，时间戳贴近真实切换时刻 */
+  if (g_slog.n < SEQ_LOG_N)
+  {
+    uint8_t k = g_slog.n;
+    g_slog.ix[k]  = i;
+    g_slog.rtc[k] = RTC_APP_GetEpoch();
+    strncpy((char *)g_slog.name[k], st->name, 15);
+    ((char *)g_slog.name[k])[15] = '\0';
+    g_slog.n = (uint8_t)(k + 1u);
+  }
+
+  printf("SEQ,%u,%s,%u,%lu\r\n", (unsigned)i, st->name, (unsigned)st->dwell_s,
+         (unsigned long)HAL_GetTick());
+
+  switch (st->kind)
+  {
+  case SEQK_V4G_OFF:
+    V4G_Set(0);
+    LED_AllOff();
+    g_low_power = 0; DTU_SetLowPower(0);
+    break;
+
+  case SEQK_V4G_ON:
+    V4G_Set(1);
+    break;
+
+  case SEQK_LED:
+    if (st->led == 0xFF) LED_AllOff();
+    else                 LED_SetColor(st->led, st->bright);
+    break;
+
+  case SEQK_HB_ON:
+    g_low_power = 0; DTU_SetLowPower(0);
+    break;
+
+  case SEQK_HB_OFF:
+    DTU_SetLowPower(1);      /* 4G 仍供电，只是停掉心跳/探活 */
+    break;
+
+  case SEQK_SLEEP:
+    V4G_Set(0);
+    LED_AllOff();
+    g_low_power = 0; DTU_SetLowPower(0);
+    if (RTC_APP_ArmIn(st->sleep_s ? st->sleep_s : 1u) != 0)
+    {
+      printf("SEQ: RTC not ready -> abort sequence\r\n");
+      s_seq_run = 0;
+      return;
+    }
+    printf("SEQ: sleep %us -> Stop\r\n", (unsigned)st->sleep_s);
+    g_low_power = 1;
+    s_seq_stop  = 1;
+    s_seq_wait  = 1;
+    break;
+
+  case SEQK_LP_ROUND:
+    /* 真一轮：4G 上电走正常注网/MQTT，会话 90s 后收尾进 Stop(sleep_s)。
+       灯在整个窗口保持（最坏组合档），收尾不灭灯。 */
+    V4G_Set(1);
+    g_low_power = 0; DTU_SetLowPower(0);
+    if (st->led == 0xFF) LED_AllOff();
+    else                 LED_SetColor(st->led, st->bright);
+    s_seq_rt0      = HAL_GetTick();
+    s_seq_reported = 0;
+    s_seq_round    = 1;
+    break;
+
+  default:
+    break;
+  }
+}
+
+/* 推进到下一步；序列跑完则回常在线 */
+static void SEQ_Advance(void)
+{
+  uint8_t next = (uint8_t)(s_seq_i + 1u);
+
+  if (next >= s_seq_n)
+  {
+    printf("SEQ,DONE,%u,%lu\r\n", (unsigned)s_seq_n, (unsigned long)HAL_GetTick());
+    g_slog.done = 1;                  /* 供 SWD 回读判定收尾 */
+    s_seq_run  = 0;
+    s_seq_stop = 0;
+    s_seq_wait = 0;
+    V4G_Set(1);
+    g_low_power = 0; DTU_SetLowPower(0);
+    LED_AllOff();
+    return;
+  }
+  SEQ_Enter(next);
+}
+
+/* 组装工况表：!seq [dwell_s] */
+static void SEQ_BuildSeq(uint16_t dwell)
+{
+  uint8_t k;
+
+  if (dwell < 5) dwell = 5;
+
+  for (k = 0; k < SEQ_TABLE_N && k < SEQ_MAX_STEPS; k++)
+  {
+    SEQ_RUN[k] = SEQ_TABLE[k];
+    if (SEQ_RUN[k].kind == SEQK_LED || SEQ_RUN[k].kind == SEQK_V4G_OFF)
+      SEQ_RUN[k].dwell_s = dwell;
+    else if (SEQ_RUN[k].kind == SEQK_V4G_ON || SEQ_RUN[k].kind == SEQK_HB_ON)
+      SEQ_RUN[k].dwell_s = (uint16_t)(dwell * 2u);  /* 4G 重档驻留加倍：空闲电平漂移大 */
+    /* LP_ROUND 保持 155 = 90 会话 + 5 收尾 + 60 睡眠 */
+  }
+  s_seq_tab = SEQ_RUN;
+  s_seq_n   = (uint8_t)SEQ_TABLE_N;
+}
+
+/* 组装压缩日：!day [idle_s] [rounds] [R|Y|G] [bright]
+   结构 = 夜 Stop → 早高峰 rounds 轮 → 日间 Stop → 晚高峰 rounds 轮 → 夜 Stop */
+static void SEQ_BuildDay(uint16_t idle_s, uint8_t rounds, uint8_t led, uint8_t bright)
+{
+  uint8_t n = 0, r;
+
+  if (idle_s < 5)  idle_s = 5;
+  if (rounds < 1)  rounds = 1;
+  if (rounds > 4)  rounds = 4;
+
+  /* 睡前夜里 */
+  snprintf(seq_name_pool[n], sizeof(seq_name_pool[n]), "day_night1");
+  SEQ_DAY[n].name = seq_name_pool[n];
+  SEQ_DAY[n].dwell_s = idle_s; SEQ_DAY[n].sleep_s = idle_s;
+  SEQ_DAY[n].kind = SEQK_SLEEP; SEQ_DAY[n].led = 0xFF; SEQ_DAY[n].bright = 0;
+  n++;
+
+  /* 早高峰窗口 */
+  for (r = 0; r < rounds; r++)
+  {
+    snprintf(seq_name_pool[n], sizeof(seq_name_pool[n]), "day_am%u", (unsigned)(r + 1u));
+    SEQ_DAY[n].name = seq_name_pool[n];
+    SEQ_DAY[n].dwell_s = (uint16_t)SEQ_WIN_ROUND_S; SEQ_DAY[n].sleep_s = 60;
+    SEQ_DAY[n].kind = SEQK_LP_ROUND; SEQ_DAY[n].led = led; SEQ_DAY[n].bright = bright;
+    n++;
+  }
+
+  /* 日间 */
+  snprintf(seq_name_pool[n], sizeof(seq_name_pool[n]), "day_midday");
+  SEQ_DAY[n].name = seq_name_pool[n];
+  SEQ_DAY[n].dwell_s = idle_s; SEQ_DAY[n].sleep_s = idle_s;
+  SEQ_DAY[n].kind = SEQK_SLEEP; SEQ_DAY[n].led = 0xFF; SEQ_DAY[n].bright = 0;
+  n++;
+
+  /* 晚高峰窗口 */
+  for (r = 0; r < rounds; r++)
+  {
+    snprintf(seq_name_pool[n], sizeof(seq_name_pool[n]), "day_pm%u", (unsigned)(r + 1u));
+    SEQ_DAY[n].name = seq_name_pool[n];
+    SEQ_DAY[n].dwell_s = (uint16_t)SEQ_WIN_ROUND_S; SEQ_DAY[n].sleep_s = 60;
+    SEQ_DAY[n].kind = SEQK_LP_ROUND; SEQ_DAY[n].led = led; SEQ_DAY[n].bright = bright;
+    n++;
+  }
+
+  /* 收尾夜 */
+  snprintf(seq_name_pool[n], sizeof(seq_name_pool[n]), "day_night2");
+  SEQ_DAY[n].name = seq_name_pool[n];
+  SEQ_DAY[n].dwell_s = idle_s; SEQ_DAY[n].sleep_s = idle_s;
+  SEQ_DAY[n].kind = SEQK_SLEEP; SEQ_DAY[n].led = 0xFF; SEQ_DAY[n].bright = 0;
+  n++;
+
+  s_seq_tab = SEQ_DAY;
+  s_seq_n   = n;
+}
+
+/* 估算序列总时长（秒）：SLEEP/LP_ROUND 用标称，其余用 dwell */
+static uint32_t SEQ_Estimate(void)
+{
+  uint32_t t = 0;
+  uint8_t  k;
+  for (k = 0; k < s_seq_n; k++) t += s_seq_tab[k].dwell_s;
+  return t;
+}
+
+/* 处理 PC '!' 命令行（不含前导 '!' 与行尾 CR/LF） */
+static void SEQ_HandleCmd(const char *line)
+{
+  printf("PC-CMD> !%s\r\n", line);
+
+  if (strncmp(line, "help", 4) == 0)
+  {
+    printf("SEQ help:\r\n");
+    printf("  !seq [dwell_s]                        13 档工况表，常规档默认 60s\r\n");
+    printf("  !day [idle_s] [rounds] [R|Y|G] [bright]  压缩日\r\n");
+    printf("  !stop                                 中止测试，回常在线\r\n");
+    printf("  !help                                 本帮助\r\n");
+    printf("  例: !seq 60   !day 30 3 G 255\r\n");
+    return;
+  }
+
+  if (strncmp(line, "stop", 4) == 0)
+  {
+    s_seq_run = 0; s_seq_stop = 0; s_seq_wait = 0; s_seq_round = 0;
+    g_low_power = 0; DTU_SetLowPower(0);
+    V4G_Set(1);
+    LED_AllOff();
+    printf("SEQ: aborted -> stay online\r\n");
+    return;
+  }
+
+  if (strncmp(line, "seq", 3) == 0)
+  {
+    const char *p = line + 3;
+    int dwell = 60;
+    while (*p == ' ') p++;
+    if (*p >= '0' && *p <= '9') dwell = atoi(p);
+    if (dwell < 5) dwell = 5;
+    if (dwell > 600) dwell = 600;
+
+    SEQ_BuildSeq((uint16_t)dwell);
+  }
+  else if (strncmp(line, "day", 3) == 0)
+  {
+    const char *p = line + 3;
+    int idle = 30, rounds = 3, bright = 255;
+    uint8_t led = LED_COLOR_GREEN;
+    int got;
+
+    for (got = 0; got < 2; got++)
+    {
+      while (*p == ' ') p++;
+      if (*p < '0' || *p > '9') break;
+      if (got == 0) idle   = atoi(p);
+      else          rounds = atoi(p);
+      while (*p && *p != ' ') p++;
+    }
+    while (*p == ' ') p++;
+    if (*p == 'R' || *p == 'r')      led = LED_COLOR_RED;
+    else if (*p == 'Y' || *p == 'y') led = LED_COLOR_YELLOW;
+    else if (*p == 'G' || *p == 'g') led = LED_COLOR_GREEN;
+    if (*p) p++;
+    while (*p == ' ') p++;
+    if (*p >= '0' && *p <= '9') bright = atoi(p);
+    if (bright < 0)   bright = 0;
+    if (bright > 255) bright = 255;
+
+    SEQ_BuildDay((uint16_t)idle, (uint8_t)rounds, led, (uint8_t)bright);
+  }
+  else
+  {
+    printf("SEQ: unknown cmd '%s' (try !help)\r\n", line);
+    return;
+  }
+
+  /* 启动：先退出 lp_cycle，避免两套状态机打架 */
+  g_lp_cycle = 0;
+  s_lp_state = 0;
+  g_slog.n     = 0;                     /* 清空标记日志 */
+  g_slog.done  = 0;
+  s_seq_run  = 1;
+  printf("SEQ: start, %u steps, est %lu s\r\n", (unsigned)s_seq_n,
+         (unsigned long)SEQ_Estimate());
+  SEQ_Enter(0);
 }
 
 /* USER CODE END 0 */
@@ -314,7 +694,7 @@ int main(void)
     /* lp_cycle 睡眠态 = 真 Stop（SLEEPDEEP=1，仅 RTC 闹钟 EXTI17 能唤醒）；
        其余（含旧 sleep 模式）= Sleep（内核停、外设时钟在，UART RX 可唤醒，
        模组维持 MQTT —— 这个语义依赖 UART 唤醒，绝不能进 Stop）。 */
-    uint8_t lp_stop = (g_lp_cycle && s_lp_state == 3);
+    uint8_t lp_stop = (g_lp_cycle && s_lp_state == 3) || s_seq_stop;
     if (g_low_power) HAL_SuspendTick(); else HAL_ResumeTick();
     if (lp_stop) SCB->SCR |=  SCB_SCR_SLEEPDEEP_Msk;
     else         SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
@@ -327,7 +707,19 @@ int main(void)
     if (g_rtc_alarm_hit)
     {
       g_rtc_alarm_hit = 0;
-      if (g_lp_cycle && s_lp_state == 3)
+      if (s_seq_run && s_seq_wait)
+      {
+        /* 工况测试的 Stop 醒来：F1 退出 Stop 后 SYSCLK = HSI，
+           必须重配时钟，否则 UART 波特率全错。 */
+        g_low_power = 0;
+        HAL_ResumeTick();
+        SystemClock_Config();
+        s_seq_stop = 0;
+        s_seq_wait = 0;
+        printf("SEQ: wake (rtc=%u) -> next step\r\n", RTC_APP_GetEpoch());
+        SEQ_Advance();
+      }
+      else if (g_lp_cycle && s_lp_state == 3)
       {
         g_low_power = 0;          /* 恢复 SysTick（下一圈顶部会 Resume） */
         DTU_SetLowPower(0);
@@ -397,6 +789,54 @@ int main(void)
     {
       g_ack_pending = 0;
       HAL_UART_Transmit(&UART_4G, (uint8_t*)g_ack_buf, (uint16_t)strlen(g_ack_buf), 200);
+    }
+
+    /* ---- 工况测试引擎推进（bench test）---- */
+    if (s_seq_run)
+    {
+      if (s_seq_round == 1)          /* LP_ROUND：4G 会话进行中 */
+      {
+        uint32_t t_in = HAL_GetTick() - s_seq_rt0;
+        if (!s_seq_reported && t_in >= LP_REPORT_AT_MS)
+        {
+          char rep[128];
+          int n = snprintf(rep, sizeof(rep),
+                   "{\"cmd\":\"report\",\"wake\":\"seq\",\"roll\":%d,\"pitch\":%d,"
+                   "\"rtc\":%lu}\r\n", g_sc7_roll, g_sc7_pitch,
+                   (unsigned long)RTC_APP_GetEpoch());
+          HAL_UART_Transmit(&UART_4G, (uint8_t*)rep, (uint16_t)n, 200);
+          s_seq_reported = 1;
+          printf("SEQ: report published\r\n");
+        }
+        if (t_in >= LP_SESSION_MS) s_seq_round = 2;
+      }
+      else if (s_seq_round == 2)     /* LP_ROUND：收尾 → Stop */
+      {
+        s_seq_round = 0;
+        LP_CloseAndSleepEx(s_seq_sleep ? s_seq_sleep : 60u, 0);
+        s_seq_stop = 1;
+        s_seq_wait = 1;
+      }
+      else if (!s_seq_wait &&
+               (HAL_GetTick() - s_seq_t0) >= (uint32_t)s_seq_dwell * 1000u)
+      {
+        SEQ_Advance();
+      }
+    }
+
+    /* ---- PC '!' 测试命令行 ---- */
+    if (pc_cmd_ready)
+    {
+      pc_cmd_ready = 0;
+      SEQ_HandleCmd(pc_cmd);
+    }
+
+    /* ---- SWD 注入的命令行（无 PC 串口时的入口，脚本写 RAM 触发）---- */
+    if (g_test_go)
+    {
+      g_test_go = 0;
+      ((char *)g_test_cmd)[sizeof(g_test_cmd) - 1u] = '\0';
+      SEQ_HandleCmd((const char *)g_test_cmd);
     }
 
     /* ---- lp_cycle 会话推进 ---- */
@@ -985,8 +1425,28 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
        '~' = 触发 DTU 调试探针
        'v' = 翻转 4G 模组电源 (PA3/V4G)
              —— 4G 一旦断电 MQTT 也断了，所以必须留一个**独立于 4G 链路**的验证入口
-       'p' = 打印 PA3 电平与三路 LED 当前亮度 */
-    if (RX_BYTE_PC == '~')
+       'p' = 打印 PA3 电平与三路 LED 当前亮度
+       '!' = 进入本地命令行（行尾 CR/LF 提交），内容不转发给 4G 模组。
+             命令见 SEQ_HandleCmd：!seq / !day / !stop / !help */
+    if (pc_cmd_mode)
+    {
+      if (RX_BYTE_PC == '\r' || RX_BYTE_PC == '\n')
+      {
+        if (pc_cmd_len) { pc_cmd[pc_cmd_len] = '\0'; pc_cmd_ready = 1; }
+        pc_cmd_mode = 0;
+        pc_cmd_len  = 0;
+      }
+      else if (pc_cmd_len < (uint8_t)(sizeof(pc_cmd) - 1u))
+      {
+        pc_cmd[pc_cmd_len++] = (char)RX_BYTE_PC;
+      }
+    }
+    else if (RX_BYTE_PC == '!')
+    {
+      pc_cmd_mode = 1;
+      pc_cmd_len  = 0;
+    }
+    else if (RX_BYTE_PC == '~')
     {
       dbg_trigger = 1;
     }
