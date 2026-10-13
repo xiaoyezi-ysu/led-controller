@@ -42,13 +42,33 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
 )
 
+# ---------------------------------------------------------------------------
+# 4G 模组驱动选择：自动跟随 Core/Inc/board_config.h 里的模块宏
+#   MODULE_FSC_AT  → 飞思创 AT 指令固件   Core/Src/dtu_ctrl.c
+#   MODULE_YINERDA → 银尔达透传固件(默认) Core/Src/dtu.c
+# 两者对外 API 一致，切换宏后 build 会自动重新 configure 并改编译对应 .c。
+# ---------------------------------------------------------------------------
+set(_BOARD_CFG "${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc/board_config.h")
+file(STRINGS "${_BOARD_CFG}" _MODULE_FSC_AT_LINE
+     REGEX "^[ \t]*#[ \t]*define[ \t]+MODULE_FSC_AT")
+if(_MODULE_FSC_AT_LINE)
+    set(DTU_DRIVER_SRC Core/Src/dtu_ctrl.c)
+    message(STATUS "4G module driver: Fibocom AT command (MODULE_FSC_AT)")
+else()
+    set(DTU_DRIVER_SRC Core/Src/dtu.c)
+    message(STATUS "4G module driver: Yinerda transparent (MODULE_YINERDA)")
+endif()
+# 让 CMake 监视 board_config.h：改动模组宏后再次 build 会自动重新 configure
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_BOARD_CFG}")
+
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/sc7a20h.c
     Core/Src/iccid_storage.c
-    Core/Src/dtu.c
+    ${DTU_DRIVER_SRC}
     Core/Src/board_io.c
+    Core/Src/rtc_app.c
 )
 
 # Add include paths

@@ -5,6 +5,36 @@
 #define LICENSE_PLATE_BOARD
 // #define MINIMUM_BOARD
 
+/* ---------- 系统主频档位（L1 降频省电）----------
+   定义 CPU_CLOCK_8MHZ : HSE 8MHz 直出、关闭 PLL → SYSCLK = HCLK = 8MHz。
+                         MCU 的 Sleep 电流从 ~22mA 降到 ~4mA（见
+                         docs/low-power-1mA-plan.md §L1）。
+   注释掉（默认）      : HSE 8MHz × PLL9 = 72MHz —— 原行为。
+   回滚：只改这一行即可，SystemClock_Config 与 LED 分频会自动跟随。 */
+#define CPU_CLOCK_8MHZ
+
+/* ---------- 4G 模组驱动选择（二选一：取消注释对应行）----------
+   MODULE_YINERDA : 银尔达 YED_DTU4 透传固件。命令集 config,set/get,mqtt；
+                    ICCID 用 config,get,iccid 查询；连接建立后模组自动透传。
+                    驱动文件 Core/Src/dtu.c + Core/Inc/dtu.h
+   MODULE_FSC_AT  : 飞思创 AT 指令固件。命令集 AT+WKMOD1 / AT+MQTTSV1 /
+                    AT+MQTTCONN1 / AT+MQTTPUB1 / AT+MQTTSUB1 / AT+ICCID? / AT+S / AT+Z；
+                    连接建立后模组同样自动透传。
+                    驱动文件 Core/Src/dtu_ctrl.c + Core/Inc/dtu_ctrl.h
+
+   两个驱动对外 API 完全一致（DTU_Init/Process/RxByte/MarkCmdReceived/
+   DebugProbe/SetLowPower/IsLowPower），main.c 用 #ifdef 条件包含即可共用。
+   CMakeLists.txt 会自动读取本宏决定编译哪个 .c，无需手工改构建脚本。 */
+#define MODULE_YINERDA
+// #define MODULE_FSC_AT
+
+#if !defined(MODULE_YINERDA) && !defined(MODULE_FSC_AT)
+  #define MODULE_YINERDA          /* 未指定时默认银尔达 */
+#endif
+#if defined(MODULE_YINERDA) && defined(MODULE_FSC_AT)
+  #error "MODULE_YINERDA 与 MODULE_FSC_AT 只能选择一个"
+#endif
+
 /* MQTT 主题前缀 */
 #define MQTT_TOPIC_PREFIX  "xiaoyeziUESTC1147"
 
@@ -30,10 +60,19 @@
   #define LED_GRN_PORT    GPIOB
   #define LED_GRN_PIN     GPIO_PIN_0      /* TIM3_CH3 */
 
-  /* TIM3 时基：72MHz / (PSC+1) / (ARR+1) = 72M/256/256 ≈ 1098Hz
-     ARR=255 使 CCR 与 8 位亮度值 1:1 对应（0..255） */
-  #define LED_PWM_TIM          TIM3
+  /* TIM3 时基：ARR=255 使 CCR 与 8 位亮度值 1:1 对应（0..255）。
+     PSC 随主频选，保证 PWM 频率远高于人眼频闪阈值：
+       72MHz（APB1=DIV2 → TIM3CLK=2×36M=72M）: PSC=255 → 72M/256/256 ≈ 1098 Hz
+        8MHz（APB1=DIV1 → TIM3CLK=  8M     ）: PSC=  0 →  8M/256/256 = 31.25 kHz
+     TIM3CLK 由 APB1 分频决定（见 SystemClock_Config）；DIV1 时无 ×2 倍频。 */
+#ifdef CPU_CLOCK_8MHZ
+  #define LED_PWM_TIMCLK_HZ    8000000UL
+  #define LED_PWM_PRESCALER    0
+#else
+  #define LED_PWM_TIMCLK_HZ    72000000UL
   #define LED_PWM_PRESCALER    255
+#endif
+  #define LED_PWM_TIM          TIM3
   #define LED_PWM_PERIOD       255
   #define LED_BRIGHT_MAX       255
 

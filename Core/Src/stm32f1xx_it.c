@@ -216,4 +216,12 @@ void USART3_IRQHandler(void)
   extern UART_HandleTypeDef huart3;
   HAL_UART_IRQHandler(&huart3);
 }
+
+/* RTC 闹钟：Stop 模式的定时唤醒源（EXTI Line17）。
+   rtc_app.c 用纯寄存器实现 RTC，不依赖 HAL_RTC 模块。 */
+void RTC_Alarm_IRQHandler(void)
+{
+  extern void RTC_APP_AlarmIRQ(void);
+  RTC_APP_AlarmIRQ();
+}
 /* USER CODE END 1 */

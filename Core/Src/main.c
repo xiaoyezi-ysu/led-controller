@@ -26,8 +26,15 @@
 #include <stdlib.h>
 #include "board_config.h"
 #include "board_io.h"
-#include "dtu.h"
+/* 4G 模组驱动二选一（见 board_config.h 的 MODULE_* 宏）：
+   两套驱动对外 API 完全一致，故 main.c 其余部分无需分叉。 */
+#ifdef MODULE_FSC_AT
+#include "dtu_ctrl.h"      /* 飞思创 AT 指令固件 */
+#else
+#include "dtu.h"           /* 银尔达 YED_DTU4 透传固件（默认） */
+#endif
 #include "sc7a20h.h"
+#include "rtc_app.h"
 #include <math.h>
 /* USER CODE END Includes */
 
@@ -124,6 +131,22 @@ static char     g_ack_buf[96];
 static uint32_t g_ack_at = 0;
 static uint8_t  g_ack_pending = 0;
 
+/* ===== lp_cycle：RTC 定时唤醒循环 =========================================
+   收到 {"cmd":"lp_cycle","period_min":N} 后进入循环模式：
+     会话(4G 开, ~90s)：上报 report + 服务器可下发 {"cmd":"time","epoch":..} 对表
+     收尾：+++ 进指令模式 → AT+CCLK? 授时（探测式，失败也无妨）→ 挂 RTC 闹钟
+           → 关 4G → Stop（电流 ≈1.16 mA，见 docs/r24-removed-1mA.html）
+     唤醒：RTC 闹钟 EXTI17 自动唤醒 → 重开会话
+   防变砖：仅指令进入；SW4 复位/重新上电后回到普通在线模式；
+           RTC 未就绪则拒绝进入循环。 */
+#define LP_SESSION_MS    90000u   /* 每个会话最长在线时长 */
+#define LP_REPORT_AT_MS  45000u   /* 会话内上报时刻（MQTT 通常已连上） */
+static uint8_t  g_lp_cycle   = 0;     /* 1 = 循环模式使能 */
+static uint32_t g_lp_period_s = 1800; /* 上报周期（秒），指令 period_min 设定 */
+static uint8_t  s_lp_state    = 0;    /* 0 idle 1 session 2 closing 3 sleeping */
+static uint32_t s_lp_t0       = 0;    /* 会话开始时刻 */
+static uint8_t  s_lp_reported = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -155,6 +178,65 @@ static int json_int(const char *json, const char *key, int def, int lo, int hi)
   if (v < lo) v = lo;
   if (v > hi) v = hi;
   return v;
+}
+
+/* ===== lp_cycle 辅助函数 ================================================== */
+
+/* 会话收尾（阻塞 ≈6s，时序不敏感）：
+   等 ACK 发完 → +++ 进指令模式 → config,get,nettime 授时（~1.5s，无应答跳过）
+   → AT+ENTM 回透传 → 挂 RTC 闹钟 → 关 4G → 进睡眠标志（主循环下一个 WFI 即 Stop） */
+static void LP_CloseAndSleep(void)
+{
+  /* 等 ACK 队列发完（最多 1.5s）。注意此时主循环被本函数阻塞，
+     ACK 必须就地发送，不能指望主循环——否则 ACK 永远发不出去。 */
+  uint32_t t0 = HAL_GetTick();
+  while (g_ack_pending && HAL_GetTick() - t0 < 1500u)
+  {
+    if ((int32_t)(HAL_GetTick() - g_ack_at) >= 0)
+    {
+      g_ack_pending = 0;
+      HAL_UART_Transmit(&UART_4G, (uint8_t*)g_ack_buf, (uint16_t)strlen(g_ack_buf), 200);
+      printf("LP: ack flushed\r\n");
+    }
+  }
+
+  /* +++ 前后各留 ≥1s 静默（模组退出透传的时序要求，见 dtu.c ESC_GUARD_MS） */
+  HAL_Delay(1100);
+  HAL_UART_Transmit(&UART_4G, (uint8_t *)"+++", 3, 200);
+  HAL_Delay(1200);
+
+  /* 试探授时：+++ 已进指令模式，阻塞问 DTU 要网络时间（~1.5s，PC 直连实测
+     nettime 秒回 0.15s；ntptime=1 已持久化，时间走 NTP 校准）。
+     无应答只跳过授时，不影响后续流程；定时唤醒用相对闹钟，不依赖绝对时间。 */
+  rbuf_rd = rbuf_wr;                       /* 丢掉 +++ 前的旧数据 */
+  {
+    uint32_t ep = 0;
+    if (DTU_QueryNettime(&ep))
+      printf("LP: RTC synced from DTU nettime, epoch=%u\r\n", ep);
+    else
+      printf("LP: no nettime reply -> keep old RTC count\r\n");
+  }
+  HAL_UART_Transmit(&UART_4G, (uint8_t *)"AT+ENTM\r\n", 9, 200);
+  HAL_Delay(300);
+
+  /* 挂闹钟（对表之后，闹钟基于最新计数） */
+  if (RTC_APP_ArmIn(g_lp_period_s) != 0)
+  {
+    printf("LP: RTC NOT ready -> abort cycle, stay online\r\n");
+    g_lp_cycle = 0;
+    s_lp_state = 0;
+    return;
+  }
+  printf("LP: alarm armed +%us, entering Stop (4G cut)\r\n", g_lp_period_s);
+
+  /* 关 4G、清接收态、置睡眠标志；主循环顶部 WFI 即进 Stop */
+  V4G_Set(0);
+  json_len = 0; json_ready = 0;
+  rbuf_rd = rbuf_wr;
+  LED_AllOff();
+  g_low_power = 1;
+  DTU_SetLowPower(1);
+  s_lp_state = 3;
 }
 
 /* USER CODE END 0 */
@@ -215,6 +297,11 @@ int main(void)
 
   DTU_Init();
 
+  /* RTC（LSE + 闹钟唤醒 Stop 的定时器）。LSE 起振最多 5s，失败不影响其它功能。 */
+  RTC_APP_Init();
+  printf("RTC: %s (cnt=%u)\r\n", RTC_APP_Ready() ? "ready" : "UNAVAILABLE",
+         RTC_APP_GetEpoch());
+
   /* USER CODE END 2 */
 
   /* Infinite loop — SysTick wakes every 1ms, WFI sleeps otherwise */
@@ -224,9 +311,46 @@ int main(void)
   {
     /* 睡眠模式：挂起 SysTick，让 MCU 真正深度空闲，仅被 UART/RTC 等中断唤醒；
        非睡眠模式：恢复 SysTick 保证 1ms 时基与 HAL_Delay 正常。 */
+    /* lp_cycle 睡眠态 = 真 Stop（SLEEPDEEP=1，仅 RTC 闹钟 EXTI17 能唤醒）；
+       其余（含旧 sleep 模式）= Sleep（内核停、外设时钟在，UART RX 可唤醒，
+       模组维持 MQTT —— 这个语义依赖 UART 唤醒，绝不能进 Stop）。 */
+    uint8_t lp_stop = (g_lp_cycle && s_lp_state == 3);
     if (g_low_power) HAL_SuspendTick(); else HAL_ResumeTick();
+    if (lp_stop) SCB->SCR |=  SCB_SCR_SLEEPDEEP_Msk;
+    else         SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
     __WFI();
     uint32_t now = HAL_GetTick();
+
+    /* RTC 闹钟唤醒（lp_cycle 睡眠态）：重开 4G 会话。
+       注意：这一圈 HAL_SuspendTick 已把 SysTick 挂起，now 读数停在睡眠前，
+       会话内不再依赖 now 做绝对计时，收尾前的 HAL_Delay 都不依赖 tick。 */
+    if (g_rtc_alarm_hit)
+    {
+      g_rtc_alarm_hit = 0;
+      if (g_lp_cycle && s_lp_state == 3)
+      {
+        g_low_power = 0;          /* 恢复 SysTick（下一圈顶部会 Resume） */
+        DTU_SetLowPower(0);
+        HAL_ResumeTick();
+        /* ⚠ F1 从 Stop 退出后 SYSCLK = HSI，必须重配时钟回 HSE 8M，
+           否则 USART1/3 波特率全错、模组通信成乱码。 */
+        SystemClock_Config();
+        V4G_Set(1);               /* 4G 上电，走正常注网/MQTT 流程 */
+        s_lp_t0 = HAL_GetTick();
+        s_lp_state = 1;
+        s_lp_reported = 0;
+        printf("LP: RTC alarm -> session start (rtc=%u)\r\n", RTC_APP_GetEpoch());
+      }
+      /* ⚠ 2026-10-13 修复（会话被瞬间掐断的根因）：
+         s_lp_t0 是在上面 HAL_ResumeTick()+SystemClock_Config()+V4G_Set(1)
+         之后才赋值的，已比本圈开头「__WFI() 之后立刻取」的 now 大几毫秒。
+         SysTick 在 Stop 期间被挂起，那一圈的 now 还停在睡眠前的冻结值，
+         于是 now - s_lp_t0 为负 → uint32 下溢成 0xFFFFFFxx → 会话首圈即被判
+         t_in >= LP_SESSION_MS，直接跳收尾。实测会话只剩 ~13.7 s（本该 90 s），
+         并连带导致 4G 来不及注网（发不出 report）、nettime 授时必然失败。
+         这里刷新 now，供本圈剩余逻辑（会话计时 / DTU / ACK / SC7）使用。 */
+      now = HAL_GetTick();
+    }
 
     /* SWD 注入：脚本写入的命令原样转给 4G 模组（见 g_dbg_tx 注释） */
     if (g_dbg_tx_len)
@@ -237,8 +361,10 @@ int main(void)
     }
 
     /* SC7A20H 姿态：每 500ms 读一次并算倾角。
-       g_sc7_id != 0x11 时整段跳过 -> 传感器不在板子上也不会拖慢主循环。 */
-    if (g_sc7_id == 0x11 && now - last_sc7 >= 500)
+       g_sc7_id != 0x11 时整段跳过 -> 传感器不在板子上也不会拖慢主循环。
+       lp_cycle 睡眠态（4G 已断）也跳过 —— 省电且醒来时刻读一次即可。 */
+    uint8_t lp_sleeping = (g_lp_cycle && s_lp_state == 3);
+    if (!lp_sleeping && g_sc7_id == 0x11 && now - last_sc7 >= 500)
     {
       int16_t ax, ay, az;
       last_sc7 = now;
@@ -263,7 +389,8 @@ int main(void)
       }
     }
 
-    DTU_Process(now);
+    if (!lp_sleeping)
+      DTU_Process(now);
 
     /* 延时 ACK：到点后把排队的 ACK 发给 4G 模组（尾带 \r\n，模组按行打包上报） */
     if (g_ack_pending && (int32_t)(now - g_ack_at) >= 0)
@@ -271,6 +398,32 @@ int main(void)
       g_ack_pending = 0;
       HAL_UART_Transmit(&UART_4G, (uint8_t*)g_ack_buf, (uint16_t)strlen(g_ack_buf), 200);
     }
+
+    /* ---- lp_cycle 会话推进 ---- */
+    if (g_lp_cycle && s_lp_state == 1)
+    {
+      /* 现读 HAL_GetTick()（会话期 g_low_power=0，SysTick 在跑）：
+         不能用本圈开头的 now —— 唤醒那一圈 now 是睡眠前的冻结值，
+         与刚赋值的 s_lp_t0 相减会下溢，详见上面 g_rtc_alarm_hit 处的注释。 */
+      uint32_t t_in = HAL_GetTick() - s_lp_t0;
+      /* 到点上报一次：姿态 + RTC 时间。模组 MQTT 透传模式自动发布到上行主题。 */
+      if (!s_lp_reported && t_in >= LP_REPORT_AT_MS)
+      {
+        char rep[128];
+        int n = snprintf(rep, sizeof(rep),
+                 "{\"cmd\":\"report\",\"wake\":\"rtc\",\"roll\":%d,\"pitch\":%d,"
+                 "\"sc7_ok\":%u,\"sc7_err\":%u,\"rtc\":%u}\r\n",
+                 g_sc7_roll, g_sc7_pitch, g_sc7_ok, g_sc7_err, RTC_APP_GetEpoch());
+        HAL_UART_Transmit(&UART_4G, (uint8_t*)rep, (uint16_t)n, 200);
+        s_lp_reported = 1;
+        printf("LP: report published (%d bytes)\r\n", n);
+      }
+      /* 会话到时（或网络没起来也算超时）→ 收尾 */
+      if (t_in >= LP_SESSION_MS)
+        s_lp_state = 2;
+    }
+    if (g_lp_cycle && s_lp_state == 2)
+      LP_CloseAndSleep();      /* 阻塞 ≈3.5s：授时 → 挂闹钟 → 关 4G → 置睡 */
 
     if (dbg_trigger)
     {
@@ -306,7 +459,12 @@ int main(void)
       /* 系统指令（sleep 等）与 Web 格式一样，靠订阅主题(已含 ICCID)路由到本机，
          不再要求 payload 内出现 ICCID —— 否则 {"cmd":"sleep"} 会被 match 校验直接丢弃 */
       int is_sys_cmd = (strstr((char*)json_buf, "\"cmd\":\"sleep\"") != NULL) ||
-                       (strstr((char*)json_buf, "\"cmd\": \"sleep\"") != NULL);
+                       (strstr((char*)json_buf, "\"cmd\": \"sleep\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\":\"lp_cycle\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\": \"lp_cycle\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\":\"lp_cycle_off\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\":\"time\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\": \"time\"") != NULL);
       uint8_t match = 1;
       if (!is_web_led && !is_sys_cmd && my_iccid[0])
       {
@@ -348,6 +506,39 @@ int main(void)
           V4G_Set((uint8_t)on);
           printf("V4G(PA3): %s\r\n", on ? "ON  -> 4G module powered" : "OFF -> 4G module cut");
           ack_cmd = "v4g";
+        }
+        /* 定时唤醒循环：{"cmd":"lp_cycle","period_min":N}（N=1..1440，缺省 30）。
+           立即回 ACK 后收尾当前会话：授时→挂闹钟→关 4G→Stop；
+           之后每 N 分钟 RTC 唤醒一轮（上报+授时+再睡）。 */
+        else if (strstr((char*)json_buf, "\"cmd\":\"lp_cycle\"") || strstr((char*)json_buf, "\"cmd\": \"lp_cycle\""))
+        {
+          int per = json_int((const char*)json_buf, "\"period_min\"",
+                             (int)(g_lp_period_s / 60u), 1, 1440);
+          g_lp_period_s = (uint32_t)per * 60u;
+          g_lp_cycle = 1;
+          s_lp_state = 2;    /* 主循环下一圈走收尾（先让 ACK 发出去） */
+          printf("LP: lp_cycle ON, period=%u min (RTC alarm wakeup)\r\n", per);
+          ack_cmd = "lp_cycle";
+        }
+        /* 退出循环模式，回到常在线：{"cmd":"lp_cycle_off"} */
+        else if (strstr((char*)json_buf, "\"cmd\":\"lp_cycle_off\""))
+        {
+          g_lp_cycle = 0;
+          s_lp_state = 0;
+          g_low_power = 0;
+          DTU_SetLowPower(0);
+          printf("LP: lp_cycle OFF -> stay online\r\n");
+          ack_cmd = "lp_cycle_off";
+        }
+        /* 服务器授时（RTC 对表后备通道）：{"cmd":"time","epoch":<unix秒>} */
+        else if (strstr((char*)json_buf, "\"cmd\":\"time\"") || strstr((char*)json_buf, "\"cmd\": \"time\""))
+        {
+          int ep = json_int((const char*)json_buf, "\"epoch\"", 0, 0, 2147483647);
+          if (ep > 1600000000 && RTC_APP_SetEpoch((uint32_t)ep) == 0)
+            printf("LP: RTC set from server, epoch=%d\r\n", ep);
+          else
+            printf("LP: RTC set FAILED (bad epoch or RTC unavailable)\r\n");
+          ack_cmd = "time";
         }
       #ifdef LICENSE_PLATE_BOARD
         else if (is_web_led)
@@ -477,9 +668,14 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+#ifdef CPU_CLOCK_8MHZ
+  /* L1 降频档：HSE 8MHz 直出，不用 PLL → PLL 自身功耗全部省掉 */
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_OFF;
+#else
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+#endif
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -489,6 +685,27 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+#ifdef CPU_CLOCK_8MHZ
+  /* SYSCLK = HSE = 8MHz，全部不分频：
+        HCLK = 8MHz  → Flash 0 等待周期（0WS 可撑到 24MHz）
+        PCLK1 = 8MHz → TIM3CLK = 8MHz（APB1 不分频时无 ×2 倍频），
+                       与 board_config.h 的 LED_PWM_PRESCALER 计算一致；
+                       USART3 也在 PCLK1 上，8MHz / 115200 误差 +0.64%
+        PCLK2 = 8MHz → USART1（4G）用 */
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* SYSCLK 已切到 HSE，HSI 不再被任何外设引用 → 关掉省电。
+     （HAL_RCC_OscConfig 只配置 OscillatorType 里声明的振荡器，
+       上面只声明了 HSE，所以 HSI 仍是复位默认的 ON，需显式关。） */
+  __HAL_RCC_HSI_DISABLE();
+#else
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
@@ -498,8 +715,14 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+#endif
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
-  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
+#ifdef CPU_CLOCK_8MHZ
+  /* PCLK2 = 8MHz，DIV2 → ADC 时钟 4MHz（合法区间 1~14MHz，留有余量） */
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
+#else
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;   /* 72/6 = 12MHz */
+#endif
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();

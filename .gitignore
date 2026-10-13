@@ -7,3 +7,10 @@ gen.txt
 
 # 第三方工具 clone（md2docx 等），不属于本固件仓库
 tools/
+
+# 未启用的 HAL 模块驱动：HAL_RTC_MODULE_ENABLED 在 stm32f1xx_hal_conf.h 里是关的，
+# rtc_app.c 走纯寄存器实现，这几个文件编译不进固件，故不入库。
+Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rtc.h
+Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rtc_ex.h
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rtc.c
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rtc_ex.c

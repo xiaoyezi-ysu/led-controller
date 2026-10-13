@@ -1,6 +1,8 @@
 #include "dtu.h"
+#include "rtc_app.h"
 #include <string.h>
 #include <stdio.h>
+#include "rtc_app.h"       /* DTU_DebugProbe 里 nettime 对表用 */
 
 /* UART_4G 由 board_config.h 提供（= huart1） */
 extern UART_HandleTypeDef huart1;
@@ -57,9 +59,19 @@ static uint32_t cmd_rx_tick = 0;  /* 上次收到指令时刻 */
 
 /* 模组 lp 下发值：1=开低功耗(保持连接)，0=关(满频在线)。
  * 初始化阶段始终下发本值并随 config,set,save 持久化进 Flash，
- * 因此改此宏即切换模组 lp 状态，重新编译即可做 lp,0 / lp,1 对照实验。 */
+ * 因此改此宏即切换模组 lp 状态，重新编译即可做 lp,0 / lp,1 对照实验。
+ * 2026-10-13 实测：lp,1 + save 后在线待机电流与 lp,0 无差别
+ * （F-11 中位 59.69 vs 59.89 mA），且生效状态无法可靠回读 → 回滚为 0。 */
 #ifndef DTU_LP_VALUE
 #define DTU_LP_VALUE  0
+#endif
+
+/* NTP 网络对时开关：1~24 = 同步间隔(小时)，0=关闭。
+ * 2026-10-13 实测：config,get,nettime / ntptime 在本模组(YED_DTU4/Air780EPM)
+ * 无可靠应答（nettime 还会卡死命令通道），该配置无意义但无害，
+ * 保留下发以便日后固件升级后用 config,get,nettime 复测。 */
+#ifndef DTU_NTP_HOUR
+#define DTU_NTP_HOUR   1
 #endif
 
 /* 睡眠/低功耗标志：开启后停 STM32 心跳与探活，信任模组 keepalive 维持连接 */
@@ -180,6 +192,11 @@ void DTU_DebugProbe(void)
   printf("DBG netchaninfo: %s\r\n", dtu_line_ready ? dtu_line : "(no response)");
   dtu_line_ready = 0;
 
+  /* 网络时间/ntp/lp 查询已移除（2026-10-13 实测）：
+     - config,get,nettime 会把 DTU 命令通道卡死几十秒（异步取时），殃及其后所有
+       查询和 AT+ENTM；ntptime / lp 在透传模式也不回。
+     - 授时走服务器 {"cmd":"time","epoch"}；RTC_APP_ParseNettime() 保留备用。 */
+
   /* 重新进入透传：DTU 透传固件用 AT+ENTM 回到数据透传模式（需网络仍在线）。
      不重新进入的话，模组会一直停在指令模式，UART 数据不再被发布到 MQTT。 */
   printf("DBG: re-enter transparent (AT+ENTM)\r\n");
@@ -191,6 +208,67 @@ void DTU_DebugProbe(void)
   if (n > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)rbuf, n, 200);
   _4g_state = saved;
   printf("DBG done\r\n");
+}
+
+/* ==========================================================================
+ * 阻塞式探活 / nettime 授时（2026-10-13 重构，替代 RECOVER_ESC/SSTA 异步状态机）
+ *
+ * 背景：原探活走异步子状态机，DTU 应答延迟 1~4s（模组疲态时更慢）时，
+ * 迟到的应答被 clear_line 吃掉 → 误判离线 → save 重启 DTU → DTU 重启期间
+ * TX 悬空（回声/乱码）→ 恶性循环。而 DTU_DebugProbe 的阻塞式查询
+ * （发命令后 HAL_Delay 死等再读行）当天 100% 成功——应答窗口是自留的。
+ * 两者仅在空闲（cmd_rx_tick 守卫通过）时调用，阻塞期间主循环暂停，与 DebugProbe 同。
+ * ========================================================================== */
+
+/* 阻塞 ≈4.2s。返回 1 = 链路在线（ssta=4），且已用 AT+ENTM 送回透传模式。
+ * 内部临时把 _4g_state 降到 RECOVER_SSTA 以打开 DTU_RxByte 捕获（同 DebugProbe）。 */
+static uint8_t dtu_probe_blocking(void)
+{
+  _4G_State saved = _4g_state;
+  _4g_state = _4G_RECOVER_SSTA;
+
+  dtu_clear_line();
+  dtu_send_raw("+++");            /* 退出透传进指令模式（+++ 前已留 ≥1s 静默） */
+  HAL_Delay(1300);                /* +++ 后 1s 静默 + 余量 */
+  dtu_clear_line();
+  dtu_send("config,get,ssta");
+  HAL_Delay(1500);
+  char val[8];
+  uint8_t ok = 0;
+  if (dtu_line_ready && dtu_get_value("ssta", val, sizeof(val)) && val[0] == '4')
+    ok = 1;
+  dtu_line_ready = 0;
+
+  /* 回透传：链路在线时必须回，否则透传数据不再进 MQTT；
+     链路断时 ENTM 无害（DTU 重启后自动回透传）。 */
+  dtu_clear_line();
+  dtu_send("AT+ENTM");
+  HAL_Delay(1000);
+  dtu_line_ready = 0;
+
+  _4g_state = saved;
+  return ok;
+}
+
+/* 阻塞 ≈1.5s。须已处于指令模式（如 +++ 之后）调用。
+ * 返回 1 = 拿到网络时间并已写入 RTC（内部经 RTC_APP_ParseNettime 对表）。
+ * 2026-10-13 PC 直连复测：nettime 实为秒回（0.15s），此前"卡通道"结论系
+ * 应答被状态机吃掉导致的误判；ntptime=1 已持久化，时间走 NTP 校准。 */
+uint8_t DTU_QueryNettime(uint32_t *epoch)
+{
+  _4G_State saved = _4g_state;
+  _4g_state = _4G_RECOVER_SSTA;   /* 打开 DTU_RxByte 捕获 */
+
+  dtu_clear_line();
+  dtu_send("config,get,nettime");
+  HAL_Delay(1500);
+  uint8_t ok = 0;
+  if (dtu_line_ready)
+    ok = RTC_APP_ParseNettime(dtu_line, epoch);
+  dtu_line_ready = 0;
+
+  _4g_state = saved;
+  return ok;
 }
 
 void DTU_Process(uint32_t now)
@@ -220,17 +298,38 @@ void DTU_Process(uint32_t now)
                          "{\"cmd\":\"ready\",\"id\":\"%s\"}\r\n", my_iccid);
         if (n > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)hb, (uint16_t)n, 200);
       }
-      /* 探活：周期性退出透传查 ssta，确认链路是否仍在线（空闲时才探，避免打断指令） */
+      /* 探活：周期性退出透传查 ssta，确认链路是否仍在线（空闲时才探，避免打断指令）。
+         2026-10-13 改阻塞式：应答窗口自留，杜绝迟到应答被 clear_line 吃掉
+         → 误判离线 → save 重启 DTU 的恶性循环。 */
       if ((uint32_t)(now - probe_tick) >= PROBE_PERIOD_MS &&
           (uint32_t)(now - cmd_rx_tick) >= RECOVER_IDLE_GUARD_MS)
       {
         probe_tick = now;
-        ssta_retry = 0;
-        printf("DTU: probe -> escape transparent\r\n");
-        dtu_clear_line();
-        dtu_send_raw("+++");          /* 退出透传，进入指令模式（不加 CRLF） */
-        tick = now;
-        _4g_state = _4G_RECOVER_ESC;
+        printf("DTU: probe (blocking)\r\n");
+        uint8_t ok = dtu_probe_blocking();
+        if (!ok)
+        {
+          printf("DTU: probe #1 failed, retry\r\n");
+          HAL_Delay(1500);          /* 重试前留静默 */
+          ok = dtu_probe_blocking();
+        }
+        if (ok)
+        {
+          char hb2[96];
+          int n2 = snprintf(hb2, sizeof(hb2),
+                            "{\"cmd\":\"ready\",\"id\":\"%s\"}\r\n", my_iccid);
+          if (n2 > 0) HAL_UART_Transmit(&UART_4G, (uint8_t*)hb2, (uint16_t)n2, 200);
+          hb_tick = HAL_GetTick();
+        }
+        else
+        {
+          printf("DTU: probe failed x2 -> reboot module (config,set,save)\r\n");
+          dtu_clear_line();
+          dtu_send("config,set,save");
+          tick = HAL_GetTick();
+          _4g_state = _4G_WAIT_BOOT;
+        }
+        return;
       }
     }
     return;
@@ -417,6 +516,16 @@ void DTU_Process(uint32_t now)
       printf("DTU> config,set,led,%d (turn off module LED)\r\n", DTU_LED_OFF_MODE);
       dtu_clear_line();
       snprintf(buf, sizeof(buf), "config,set,led,%d", DTU_LED_OFF_MODE);
+      dtu_send(buf);
+      _4g_state = _4G_SEND_NTP;
+      break;
+
+    case _4G_SEND_NTP:
+      /* NTP 对时：1~24h 同步一次。开启后 config,get,nettime 的时间经 NTP 校准，
+         RTC 授时不再依赖基站时间精度。 */
+      printf("DTU> config,set,ntptime,%d (NTP sync every %dh)\r\n", DTU_NTP_HOUR, DTU_NTP_HOUR);
+      dtu_clear_line();
+      snprintf(buf, sizeof(buf), "config,set,ntptime,%d", DTU_NTP_HOUR);
       dtu_send(buf);
       _4g_state = _4G_SEND_LP;
       break;

@@ -48,7 +48,8 @@ static void led_pwm_tim_init(void)
 {
   __HAL_RCC_TIM3_CLK_ENABLE();
 
-  /* 时基：72MHz / (255+1) / (255+1) ≈ 1098Hz，CCR 与 8 位亮度 1:1 */
+  /* 时基：TIM3CLK / (PSC+1) / (ARR+1)，ARR=255 → CCR 与 8 位亮度 1:1。
+     PSC 随主频切换（见 board_config.h），保持 PWM 在 1kHz~31kHz。 */
   LED_PWM_TIM->PSC = LED_PWM_PRESCALER;
   LED_PWM_TIM->ARR = LED_PWM_PERIOD;
   LED_PWM_TIM->CNT = 0;
@@ -93,7 +94,7 @@ void LED_Init(void)
   led_pwm_tim_init();
   LED_AllOff();
   printf("LED: TIM3 PWM ready (PA6=RED PA7=YEL PB0=GRN, ~%luHz)\r\n",
-         (unsigned long)(72000000UL / ((LED_PWM_PRESCALER + 1UL) * (LED_PWM_PERIOD + 1UL))));
+         (unsigned long)(LED_PWM_TIMCLK_HZ / ((LED_PWM_PRESCALER + 1UL) * (LED_PWM_PERIOD + 1UL))));
 }
 
 void LED_SetColor(uint8_t color, uint8_t bright)
