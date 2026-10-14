@@ -132,7 +132,8 @@ static uint32_t g_ack_at = 0;
 static uint8_t  g_ack_pending = 0;
 
 /* ===== lp_cycle：RTC 定时唤醒循环 =========================================
-   收到 {"cmd":"lp_cycle","period_min":N} 后进入循环模式：
+   收到 {"cmd":"lp_cycle","period_min":N,"cycles":M} 后进入循环模式
+   （period_min = 睡眠时长；cycles = 循环次数，0 = 无限，睡满 M 轮自动退出）：
      会话(4G 开, ~90s)：上报 report + 服务器可下发 {"cmd":"time","epoch":..} 对表
      收尾：+++ 进指令模式 → AT+CCLK? 授时（探测式，失败也无妨）→ 挂 RTC 闹钟
            → 关 4G → Stop（电流 ≈1.16 mA，见 docs/r24-removed-1mA.html）
@@ -143,6 +144,8 @@ static uint8_t  g_ack_pending = 0;
 #define LP_REPORT_AT_MS  45000u   /* 会话内上报时刻（MQTT 通常已连上） */
 static uint8_t  g_lp_cycle   = 0;     /* 1 = 循环模式使能 */
 static uint32_t g_lp_period_s = 1800; /* 上报周期（秒），指令 period_min 设定 */
+static uint16_t g_lp_cycles  = 0;     /* 循环次数上限：0 = 无限；N>0 = 睡满 N 轮后自动退出 */
+static uint16_t s_lp_done    = 0;     /* 已完成的睡眠轮数（每次 RTC 唤醒 +1） */
 static uint8_t  s_lp_state    = 0;    /* 0 idle 1 session 2 closing 3 sleeping */
 static uint32_t s_lp_t0       = 0;    /* 会话开始时刻 */
 static uint8_t  s_lp_reported = 0;
@@ -836,7 +839,9 @@ int main(void)
         s_lp_t0 = HAL_GetTick();
         s_lp_state = 1;
         s_lp_reported = 0;
-        printf("LP: RTC alarm -> session start (rtc=%u)\r\n", RTC_APP_GetEpoch());
+        if (s_lp_done < 0xFFFFu) s_lp_done++;      /* 本轮睡眠已完成（供循环次数判定） */
+        printf("LP: RTC alarm -> session start (rtc=%u, %u/%u)\r\n",
+               RTC_APP_GetEpoch(), (unsigned)s_lp_done, (unsigned)g_lp_cycles);
       }
       /* ⚠ 2026-10-13 修复（会话被瞬间掐断的根因）：
          s_lp_t0 是在上面 HAL_ResumeTick()+SystemClock_Config()+V4G_Set(1)
@@ -981,7 +986,29 @@ int main(void)
         s_lp_state = 2;
     }
     if (g_lp_cycle && s_lp_state == 2)
-      LP_CloseAndSleep();      /* 阻塞 ≈3.5s：授时 → 挂闹钟 → 关 4G → 置睡 */
+    {
+      /* 循环次数用尽（已睡满 g_lp_cycles 轮）→ 不再入睡，退出循环留在常在线。
+         这里 4G 还没关（关 4G 是收尾函数干的），透传模式仍通，通知能直接发出去。
+         带 "status" 字段 = 走既有的 ACK 回显抑制路径，不会自触发新一轮解析。 */
+      if (g_lp_cycles != 0 && s_lp_done >= g_lp_cycles)
+      {
+        char rep[112];
+        int n = snprintf(rep, sizeof(rep),
+                 "{\"cmd\":\"lp_cycle_done\",\"status\":\"ok\","
+                 "\"cycles\":%u,\"rtc\":%u}\r\n",
+                 (unsigned)s_lp_done, RTC_APP_GetEpoch());
+        HAL_UART_Transmit(&UART_4G, (uint8_t*)rep, (uint16_t)n, 200);
+        printf("LP: cycles done (%u/%u) -> lp_cycle OFF, stay online\r\n",
+               (unsigned)s_lp_done, (unsigned)g_lp_cycles);
+        g_lp_cycle = 0;
+        s_lp_state = 0;
+        g_low_power = 0;
+        DTU_SetLowPower(0);
+        HAL_ResumeTick();
+      }
+      else
+        LP_CloseAndSleep();    /* 阻塞 ≈3.5s：授时 → 挂闹钟 → 关 4G → 置睡 */
+    }
 
     if (dbg_trigger)
     {
@@ -1067,17 +1094,23 @@ int main(void)
           printf("V4G(PA3): %s\r\n", on ? "ON  -> 4G module powered" : "OFF -> 4G module cut");
           ack_cmd = "v4g";
         }
-        /* 定时唤醒循环：{"cmd":"lp_cycle","period_min":N}（N=1..1440，缺省 30）。
+        /* 定时唤醒循环：{"cmd":"lp_cycle","period_min":N,"cycles":M}
+           （period N=1..1440，缺省 30；cycles M=0..65535，**0=无限循环**，缺省 0）。
            立即回 ACK 后收尾当前会话：授时→挂闹钟→关 4G→Stop；
-           之后每 N 分钟 RTC 唤醒一轮（上报+授时+再睡）。 */
+           之后每 N 分钟 RTC 唤醒一轮（上报+授时+再睡）；睡满 M 轮后自动退出回常在线。 */
         else if (strstr((char*)json_buf, "\"cmd\":\"lp_cycle\"") || strstr((char*)json_buf, "\"cmd\": \"lp_cycle\""))
         {
           int per = json_int((const char*)json_buf, "\"period_min\"",
                              (int)(g_lp_period_s / 60u), 1, 1440);
+          int cyc = json_int((const char*)json_buf, "\"cycles\"", 0, 0, 65535);
           g_lp_period_s = (uint32_t)per * 60u;
+          g_lp_cycles = (uint16_t)cyc;
+          s_lp_done = 0;     /* 重新计数：本次下发重新开始算轮数 */
           g_lp_cycle = 1;
           s_lp_state = 2;    /* 主循环下一圈走收尾（先让 ACK 发出去） */
-          printf("LP: lp_cycle ON, period=%u min (RTC alarm wakeup)\r\n", per);
+          printf("LP: lp_cycle ON, period=%u min, cycles=%u (%s)\r\n",
+                 per, (unsigned)g_lp_cycles,
+                 g_lp_cycles ? "finite" : "infinite");
           ack_cmd = "lp_cycle";
         }
         /* 退出循环模式，回到常在线：{"cmd":"lp_cycle_off"} */
@@ -1085,6 +1118,7 @@ int main(void)
         {
           g_lp_cycle = 0;
           s_lp_state = 0;
+          s_lp_done = 0;
           g_low_power = 0;
           DTU_SetLowPower(0);
           printf("LP: lp_cycle OFF -> stay online\r\n");

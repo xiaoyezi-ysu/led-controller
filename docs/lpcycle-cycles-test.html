@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>lp_cycle 循环次数（cycles）验证 — 睡满 2 轮自动退出</title>
+<style>
+.backbtn{position:fixed;top:12px;right:14px;z-index:999;background:#2563eb;color:#fff;
+padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;
+box-shadow:0 2px 8px rgba(0,0,0,.22)}.backbtn:hover{opacity:.85}
+:root{--bg:#f8fafc;--card:#fff;--line:#e2e8f0;--tx:#1e293b;--mut:#64748b;--good:#059669;--bad:#b91c1c;--blue:#2563eb;--amber:#d97706}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7}
+.wrap{max-width:880px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:21px;margin:6px 0 2px}
+h2{font-size:17px;margin:30px 0 10px;border-left:4px solid var(--blue);padding-left:10px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin-bottom:14px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+th{background:#f1f5f9}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.pass{color:var(--good);font-weight:bold}
+.kpi{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
+.kpi>div{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+.kpi .lab{color:var(--mut);font-size:12.5px}
+.kpi .val{font-size:22px;font-weight:700;margin-top:2px}
+.note{border-radius:10px;padding:12px 16px;font-size:13.5px;margin:10px 0;border:1px solid}
+.note.good{background:#ecfdf5;border-color:#a7f3d0}
+.note.bad{background:#fef2f2;border-color:#fecaca}
+.note.warn{background:#fffbeb;border-color:#fde68a}
+.note.mut{background:#f8fafc;border-color:var(--line)}
+code{background:#f1f5f9;border-radius:4px;padding:1px 6px;font-size:12.5px}
+.mut{color:var(--mut)}
+svg{display:block;width:100%;height:auto}
+details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;margin:10px 0}
+details summary{cursor:pointer;font-weight:600;font-size:14px}
+details[open] summary{margin-bottom:8px}
+</style>
+</head>
+<body>
+<a class="backbtn" href="final-summary.html" title="返回最终总结">&#8592; 返回总结</a>
+<div class="wrap">
+  <h1>lp_cycle 循环次数（cycles）验证 —— 睡满 N 轮后自动退出</h1>
+  <div class="sub">2026-10-14 20:11–20:36 · 电流表 INA228（COM3, CH1） + SWD 状态轮询 + MQTT 旁听三路同采 ·
+  固件 <code>main.c cycles 支持</code> · 数据 <code>bench/data/lpcyc_20261014_202747_*</code> ·
+  脚本 <code>bench/lpcycle_cycle_test.py --meter ina228 --limit 2</code></div>
+
+  <div class="kpi">
+    <div><div class="lab">结果</div><div class="val pass">✅ 2 睡 2 醒 + 自动退出</div></div>
+    <div><div class="lab">睡段中位电流</div><div class="val">0.220 mA</div></div>
+    <div><div class="lab">睡段时长（目标 60 s）</div><div class="val">59.5 / 59.4 s</div></div>
+    <div><div class="lab">看门狗复位</div><div class="val pass">0 次</div></div>
+  </div>
+
+  <h2>一、结论</h2>
+  <div class="note good"><b>新增的 <code>cycles</code> 参数按预期工作：睡满设定轮数后自动退出循环、回到常在线。</b><br>
+  下发 <code>{"cmd":"lp_cycle","period_min":1,"cycles":2}</code> 后，板子自主走完
+  <b>睡 60 s → 醒（会话 92 s）→ 再睡 60 s → 醒 → 退出</b>，全程零人工干预、零看门狗复位。
+  退出由两条独立证据交叉印证：SWD 读到 <code>g_lp_cycle 1→0</code> 且 <code>state=idle</code>；
+  MQTT 收到固件主动上报的 <code>{"cmd":"lp_cycle_done","status":"ok","cycles":2}</code>。</div>
+
+  <h2>二、命令与语义</h2>
+  <div class="card">
+    <table>
+      <tr><th>字段</th><th>含义</th><th>范围</th><th>缺省</th></tr>
+      <tr><td><code>period_min</code></td><td><b>睡眠时长</b>（不是上报周期）。醒来后固定跑一轮约 92 s 会话（上报 + 授时），故真实间隔 ≈ period + 1.5 min</td><td>1 – 1440</td><td>30</td></tr>
+      <tr><td><code>cycles</code></td><td><b>循环次数</b>：睡满 N 轮后自动退出回常在线。<b>0 = 无限循环</b></td><td>0 – 65535</td><td>0</td></tr>
+    </table>
+    <p style="margin:12px 0 4px">
+      开启：<code>{"cmd":"lp_cycle","period_min":30,"cycles":10}</code><br>
+      退出：<code>{"cmd":"lp_cycle_off"}</code>（手动）<br>
+      完成通知：<code>{"cmd":"lp_cycle_done","status":"ok","cycles":10,"rtc":&lt;epoch&gt;}</code>
+    </p>
+    <p class="mut" style="margin:4px 0 0">
+      <code>cycles</code> 只在非零时生效；下发新的 lp_cycle 会把已完成轮数清零重新计数。
+      带 <code>status</code> 字段的完成通知同时走既有的「ACK 回显抑制」路径，不会自触发新一轮解析。
+    </p>
+  </div>
+
+  <h2>三、电流时间轴（INA228 CH1）</h2>
+  <svg viewBox="0 0 880 250" role="img" aria-label="cycles=2 电流时间轴">
+    <rect x="0" y="0" width="880" height="250" fill="#ffffff"/>
+    <!-- 纵轴参考线 -->
+    <line x1="60" y1="215" x2="830" y2="215" stroke="#cbd5e1" stroke-width="1"/>
+    <line x1="60" y1="165" x2="830" y2="165" stroke="#eef2f7" stroke-width="1"/>
+    <line x1="60" y1="115" x2="830" y2="115" stroke="#eef2f7" stroke-width="1"/>
+    <text x="52" y="219" font-size="11" fill="#64748b" text-anchor="end">0</text>
+    <text x="52" y="169" font-size="11" fill="#64748b" text-anchor="end">40</text>
+    <text x="52" y="119" font-size="11" fill="#64748b" text-anchor="end">80</text>
+    <text x="24" y="170" font-size="11" fill="#64748b">mA</text>
+
+    <!-- AWAKE 0.9-13.8 (63.6) -->
+    <rect x="61.6" y="135.5" width="23.1" height="79.5" fill="#2563eb" opacity="0.85"/>
+    <!-- SLEEP 14.9-74.4 (0.22) -->
+    <rect x="86.7" y="212.5" width="106.5" height="2.5" fill="#059669"/>
+    <!-- AWAKE 75.5-168.1 (61.3) -->
+    <rect x="195.2" y="138.4" width="165.8" height="76.6" fill="#2563eb" opacity="0.85"/>
+    <!-- SLEEP 169.3-228.7 (0.22) -->
+    <rect x="363.1" y="212.5" width="106.4" height="2.5" fill="#059669"/>
+    <!-- AWAKE 229.9-425.6 (59.6) -->
+    <rect x="471.7" y="140.5" width="350.4" height="74.5" fill="#2563eb" opacity="0.85"/>
+
+    <!-- 段标注 -->
+    <text x="193" y="105" font-size="11.5" fill="#059669" text-anchor="middle">睡 59.5 s · 0.22 mA</text>
+    <text x="469" y="105" font-size="11.5" fill="#059669" text-anchor="middle">睡 59.4 s · 0.22 mA</text>
+    <text x="278" y="128" font-size="11.5" fill="#2563eb" text-anchor="middle">会话 92.6 s · 61.3 mA</text>
+    <text x="647" y="130" font-size="11.5" fill="#2563eb" text-anchor="middle">会话 92 s · 59.6 mA（含退出后常在线）</text>
+    <text x="73" y="126" font-size="10.5" fill="#2563eb" text-anchor="middle">收尾</text>
+
+    <!-- 退出标注 -->
+    <line x1="561" y1="140" x2="561" y2="216" stroke="#d97706" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="566" y="234" font-size="11" fill="#d97706">↑ 此处 g_lp_cycle 1→0（退出，不再入睡）</text>
+
+    <!-- 横轴刻度 -->
+    <text x="60" y="245" font-size="10.5" fill="#94a3b8" text-anchor="middle">0</text>
+    <text x="167" y="245" font-size="10.5" fill="#94a3b8" text-anchor="middle">60</text>
+    <text x="275" y="245" font-size="10.5" fill="#94a3b8" text-anchor="middle">120</text>
+    <text x="382" y="245" font-size="10.5" fill="#94a3b8" text-anchor="middle">180</text>
+    <text x="490" y="245" font-size="10.5" fill="#94a3b8" text-anchor="middle">240</text>
+    <text x="597" y="245" font-size="10.5" fill="#94a3b8" text-anchor="middle">300</text>
+    <text x="705" y="245" font-size="10.5" fill="#94a3b8" text-anchor="middle">360</text>
+    <text x="812" y="245" font-size="10.5" fill="#94a3b8" text-anchor="middle">420 s</text>
+  </svg>
+  <div class="note mut" style="margin-top:4px">绿色 2.5 px 条 = Stop 睡段（真值 0.22 mA，画在基线上）。
+  时间轴是电流表自身的 t_s，它比「下发时刻」早约 8 s（采集进程先起）。
+  图上蓝色高块是 4G 在线段，末段 195.7 s 里后半截是<b>退出后保持常在线</b>（不再入睡）。</div>
+
+  <h2>四、结论（SWD 状态轮询）</h2>
+  <div class="card">
+    <table>
+      <tr><th>时刻 t</th><th>s_lp_state</th><th>g_lp_cycle</th><th>s_lp_done / 上限</th><th>解读</th></tr>
+      <tr><td class="num">0.0 s</td><td>idle</td><td>0 → 1</td><td>0 / 2</td><td>下发 <code>lp_cycle period_min=1 cycles=2</code>，立即收尾</td></tr>
+      <tr><td class="num">10 – 55 s</td><td colspan="3" class="mut">SWD 失联（Stop 中，APB 断电读不到）</td><td>第 1 次睡眠</td></tr>
+      <tr><td class="num">65.6 s</td><td>session</td><td>1</td><td><b>1 / 2</b></td><td>RTC 闹钟自主唤醒，轮数 +1，重开 4G 会话</td></tr>
+      <tr><td class="num">159 – 214 s</td><td colspan="3" class="mut">SWD 失联（Stop 中）</td><td>第 2 次睡眠</td></tr>
+      <tr><td class="num">225.2 s</td><td>session</td><td>1</td><td><b>2 / 2</b></td><td>再次自主唤醒，已睡满上限</td></tr>
+      <tr><td class="num">307.9 s</td><td><b>idle</b></td><td><b>1 → 0</b></td><td>2 / 2</td><td><b>不再入睡，退出循环回常在线</b> ✓</td></tr>
+      <tr><td class="num">308 – 401 s</td><td>idle</td><td>0</td><td>2 / 2</td><td>保持常在线（不再出现睡段）</td></tr>
+    </table>
+    <p style="margin:10px 0 0">全程 <code>g_rst_wdg = 0</code>：软看门狗一次都没误咬（睡眠期 <code>WDG_Poll</code> 不跑，
+    唤醒后主流程喂狗即认领，语义未被 cycles 分支破坏）。</p>
+  </div>
+
+  <h2>五、两表互证</h2>
+  <div class="card">
+    <table>
+      <tr><th>量</th><th>INA228（本次，COM3）</th><th>F-11（历史批次 20261014_193426）</th><th>差</th></tr>
+      <tr><td>Stop 睡段中位</td><td class="num">0.220 mA</td><td class="num">0.215 mA</td><td class="num">+2.3%</td></tr>
+      <tr><td>会话段中位</td><td class="num">61.3 mA</td><td class="num">59.2 mA</td><td class="num">+3.5%</td></tr>
+    </table>
+    <p class="mut" style="margin:10px 0 0">INA228 已知系统偏差 ≈ 增益 +1.4% / 零点 +30 µA（见
+    <code>docs/ina228-accuracy.html</code>），对上差值即落在该偏差范围内 —— 两个独立电流表读数一致。</p>
+  </div>
+
+  <h2>六、网页控制</h2>
+  <div class="card">
+    <p style="margin:0 0 8px">灯控页 <a href="led_app.html">led_app.html</a> 新增「低功耗周期（lp_cycle）」卡片：
+    睡眠时长输入框 + <code>30min / 60min / 2h / 24h</code> 快捷档，循环次数输入框 +
+    <code>无限循环 / 3 轮 / 10 轮 / 24 轮</code> 快捷档，以及「开启周期」「关闭周期（回常在线）」两个按钮。
+    下发前会用 confirm 把「睡多久 × 几轮 ≈ 总时长」和「本页将断线」一并提示。</p>
+    <p class="mut" style="margin:0">收到 <code>lp_cycle_done</code> 后状态条显示「● 周期已跑完 · 共 N 轮 · 设备已自动回到常在线」。</p>
+  </div>
+
+  <h2>七、复现方式</h2>
+  <details>
+    <summary>命令与脚本参数</summary>
+    <pre style="font-size:12.5px;overflow-x:auto;background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:10px"># 电流表：F-11（~10 Hz，自动探测）或 INA228（COM3，~1 Hz）
+python bench/lpcycle_cycle_test.py --meter ina228 --period 1 --limit 2 --cycles 2 --poll 10
+
+# --period  睡眠分钟数（period_min）
+# --limit   下发给固件的循环次数（cycles，0=无限）
+# --cycles  观察轮数（决定采集时长预算）
+# --meter   f11 | ina228</pre>
+  </details>
+
+  <h2>八、注意事项</h2>
+  <div class="note warn">
+    <b>关闭/修改周期必须落在「唤醒窗口」内</b>（醒来后约 92 s）。睡眠中 4G 已断电，MQTT 指令收不到；
+    这时两个办法：等下一个唤醒窗口，<b>或者靠 <code>cycles</code> 让它自己跑完退出</b>。
+  </div>
+  <div class="note mut">
+    <b>总时长估算</b>：<code>cycles ×（period_min + 1.5）分钟</code>。
+    例：30 min × 10 轮 ≈ 5.2 h；120 min × 24 轮 ≈ 48.6 h。
+    注意 <code>period_min</code> 太小只适合台架验证 —— 每轮都烧一次约 92 s 的 60 mA 会话，
+    日均电流会显著抬高（2 min 档 ≈ 26 mA，1000 mAh 仅够 1.6 天）。
+  </div>
+  <div class="note mut">
+    <b>本次 INA228 之所以可用</b>：F-11 表当时掉线（COM4 消失、候选口无帧）。
+    脚本已加 <code>--meter ina228</code> 与采样失败留档（<code>*_f11.err</code>），
+    F-11 缺席时自动退化为「SWD + MQTT」双路判据而不崩溃。
+  </div>
+</div>
+</body>
+</html>
