@@ -216,9 +216,9 @@
         <div class="card-title">低功耗周期（lp_cycle）</div>
         <div class="input-group">
             <input type="text" id="lpPeriod" placeholder="睡眠时长（分钟，1–1440）" value="30">
-            <input type="text" id="lpCycles" placeholder="循环次数（0=无限）" value="0" style="flex:0.75">
-            <button class="btn-connect" onclick="sendCmd('lp-cycle')">开启周期</button>
+            <input type="text" id="lpCycles" placeholder="循环次数（0=无限）" value="0" style="flex:0.7">
         </div>
+        <button class="btn-connect" style="width:100%;margin-top:8px;" onclick="sendCmd('lp-cycle')">开启周期</button>
         <div class="quick-actions" style="margin-top: 10px;">
             <button class="quick-btn" onclick="setLpPeriod(30)">30min</button>
             <button class="quick-btn" onclick="setLpPeriod(60)">60min</button>
