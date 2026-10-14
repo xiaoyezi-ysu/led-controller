@@ -213,6 +213,49 @@
     </div>
 
     <div class="card">
+        <div class="card-title">低功耗周期（lp_cycle）</div>
+        <div class="input-group">
+            <input type="text" id="lpPeriod" placeholder="睡眠时长（分钟，1–1440）" value="30">
+            <input type="text" id="lpCycles" placeholder="循环次数（0=无限）" value="0" style="flex:0.75">
+            <button class="btn-connect" onclick="sendCmd('lp-cycle')">开启周期</button>
+        </div>
+        <div class="quick-actions" style="margin-top: 10px;">
+            <button class="quick-btn" onclick="setLpPeriod(30)">30min</button>
+            <button class="quick-btn" onclick="setLpPeriod(60)">60min</button>
+            <button class="quick-btn" onclick="setLpPeriod(120)">2h</button>
+            <button class="quick-btn" onclick="setLpPeriod(1440)">24h</button>
+        </div>
+        <div class="quick-actions" style="margin-top: 8px;">
+            <button class="quick-btn" onclick="setLpCycles(0)">无限循环</button>
+            <button class="quick-btn" onclick="setLpCycles(3)">3 轮</button>
+            <button class="quick-btn" onclick="setLpCycles(10)">10 轮</button>
+            <button class="quick-btn" onclick="setLpCycles(24)">24 轮</button>
+        </div>
+        <div class="quick-actions" style="margin-top: 8px;">
+            <button class="quick-btn" style="background:rgba(244,67,54,0.15);border-color:rgba(244,67,54,0.4);"
+                    onclick="sendCmd('lp-cycle-off')">关闭周期（回常在线）</button>
+        </div>
+        <div id="lpState" style="font-size:13px;color:#888;margin-top:12px;text-align:center;">
+            周期状态：未开启
+        </div>
+        <div style="font-size:12px;color:#888;margin-top:12px;line-height:1.7;">
+            周期命令：<code>{"cmd":"lp_cycle","period_min":30,"cycles":10}</code><br>
+            退出命令：<code>{"cmd":"lp_cycle_off"}</code><br>
+            <span style="color:#f9a825;">▸ <b>period_min 是「睡眠时长」，不是上报周期</b></span>：醒来后固定跑一轮
+            会话约 1.5 min（上报 + 授时），所以真实间隔 ≈ period + 1.5 min。<br>
+            <span style="color:#f9a825;">▸ <b>cycles 是循环次数</b></span>：睡满该轮数后设备自动退出周期、
+            回到常在线并上报一条 <code>lp_cycle_done</code>；<b>填 0 = 无限循环</b>（默认）。
+            总时长 ≈ cycles ×（period + 1.5）min。<br>
+            ▸ 开启后设备立刻收尾 → 关 4G → 进 Stop，<b>本页 MQTT 会断线、点灯失效</b>，
+            之后每 period 分钟自主醒来一轮。<br>
+            ▸ <span style="color:#f44336;">关闭必须在「唤醒窗口」内下发</span>（醒来后约 1.5 min 窗口）；
+            睡眠中下发会被丢弃——那时 4G 已断电收不到指令。若设了 cycles，可等它自己跑完退出。<br>
+            ▸ 续航参考（1000 mAh）：30 min ≈ 3.1 mA / 13.5 天 · 60 min ≈ 1.7 mA / 25 天 ·
+            120 min ≈ 1.0 mA / 43 天。
+        </div>
+    </div>
+
+    <div class="card">
         <div class="card-title">日志</div>
         <div class="log-card" id="log"></div>
     </div>
@@ -247,6 +290,9 @@
         let currentColor = null;   // 当前点亮的颜色：拖亮度条时据此决定改哪路灯
         let brightTimer = null;    // 亮度节流定时器（拖动时别把 MQTT 打爆）
         let v4gOn = true;          // 4G 模组电源本地视图（PA3）
+        let lpOn = false;          // 低功耗周期本地视图（lp_cycle）
+        let lpPeriodSet = 30;      // 最后一次下发的睡眠时长（分钟），用于回执回显
+        let lpCyclesSet = 0;       // 最后一次下发的循环次数（0 = 无限）
         let lastAck = null;        // 最近一次设备回执（用于"实际亮度"回显）
         const DEFAULT_DEVICES = [
             { name: '车牌', id: '898608961026C0241530', fixed: true },
@@ -422,7 +468,7 @@
             log('已断开', 'time');
         }
 
-        // cmd: red | yellow | green | off | v4g-on | v4g-off
+        // cmd: red | yellow | green | off | v4g-on | v4g-off | lp-cycle | lp-cycle-off
         function sendCmd(cmd) {
             if (!isConnected || !client) { log('未连接', 'err'); return; }
             const targetId = document.getElementById('deviceId').value.trim();
@@ -436,6 +482,30 @@
                 msg = JSON.stringify({ cardID: deviceId, cmd: 'v4g', state: state });
                 tag = '4G 电源 ' + (state === 'on' ? '通电' : '断电');
                 v4gOn = (state === 'on');
+            } else if (cmd === 'lp-cycle') {
+                // 固件：{"cmd":"lp_cycle","period_min":N,"cycles":M}
+                // period_min = 睡眠时长（1..1440）；cycles = 循环次数（0=无限，睡满自动退出）
+                const per = parseInt(document.getElementById('lpPeriod').value, 10);
+                const cyc = parseInt(document.getElementById('lpCycles').value, 10);
+                if (!(per >= 1 && per <= 1440)) { log('睡眠时长需为 1–1440 分钟', 'err'); return; }
+                if (!(cyc >= 0 && cyc <= 65535)) { log('循环次数需为 0–65535（0=无限）', 'err'); return; }
+                const cycTxt = (cyc === 0) ? '无限循环' : (cyc + ' 轮（约 ' + cyc + '×'
+                        + (per + 1.5).toFixed(1) + ' ≈ ' + Math.round(cyc * (per + 1.5)) + ' 分钟）');
+                if (!confirm('开启低功耗周期：\n\n· 每轮睡 ' + per + ' 分钟（真实上报间隔约 '
+                        + per + '+1.5 分钟）\n· 循环次数：' + cycTxt
+                        + '\n· 设备将立刻关 4G 进 Stop，本页 MQTT 随之断线\n\n确认下发？'))
+                    return;
+                msg = JSON.stringify({ cmd: 'lp_cycle', period_min: per, cycles: cyc });
+                tag = '开启低功耗周期：睡 ' + per + ' min × ' + (cyc === 0 ? '无限' : cyc + ' 轮');
+                lpPeriodSet = per;
+                lpCyclesSet = cyc;
+                lpOn = true;
+            } else if (cmd === 'lp-cycle-off') {
+                // 固件：{"cmd":"lp_cycle_off"} —— 退出循环，回到常在线
+                // ★ 必须在「唤醒窗口」内下发（醒来后约 92s），睡眠中模组已断电收不到
+                msg = JSON.stringify({ cmd: 'lp_cycle_off' });
+                tag = '关闭低功耗周期（回常在线）';
+                lpOn = false;
             } else {
                 // ★ 用固件主推的 Web 格式 {"cmd":"led","color":X,"state":"on|off","bright":0-255}
                 // main.c 里这条走 is_web_led 分支，跳过 ICCID 匹配校验，最稳。
@@ -458,11 +528,25 @@
         }
 
         function highlightBtn(cmd) {
+            // 非灯控指令不碰 LED 高亮（原来先清空再 return，v4g / 周期指令会误灭高亮）
+            if (cmd === 'v4g-on' || cmd === 'v4g-off' ||
+                cmd === 'lp-cycle' || cmd === 'lp-cycle-off') return;
             document.querySelectorAll('.led-btn').forEach(b => b.classList.remove('active'));
-            if (cmd === 'v4g-on' || cmd === 'v4g-off') return;   // 电源开关不影响灯键高亮
             const map = { red: 0, yellow: 1, green: 2, off: 3 };
             const btns = document.querySelectorAll('.led-btn');
             if (map[cmd] !== undefined && btns[map[cmd]]) btns[map[cmd]].classList.add('active');
+        }
+
+        // 低功耗周期快捷档：写入输入框（真正下发仍走 sendCmd('lp-cycle')）
+        function setLpPeriod(min) {
+            document.getElementById('lpPeriod').value = min;
+            log('已选择睡眠时长 ' + min + ' min（点「开启周期」下发）', 'time');
+        }
+
+        // 循环次数快捷档：0 = 无限循环
+        function setLpCycles(n) {
+            document.getElementById('lpCycles').value = n;
+            log('已选择循环次数 ' + (n === 0 ? '无限' : n + ' 轮') + '（点「开启周期」下发）', 'time');
         }
 
         function updateBrightness() {
@@ -484,12 +568,35 @@
         // 这是"命令真的生效了"的凭据（固件在 LED_SetColor 之后才发这条）
         function updateDeviceState(a) {
             const el = document.getElementById('devState');
+            const isLp = (a.cmd === 'lp_cycle' || a.cmd === 'lp_cycle_off' ||
+                          a.cmd === 'lp_cycle_done');
             if (el) {
                 const nameMap = { red:'红灯', yellow:'黄灯', green:'绿灯',
-                                  off:'已关灯', sleep:'休眠中', v4g:'4G 电源已切换' };
+                                  off:'已关灯', sleep:'休眠中', v4g:'4G 电源已切换',
+                                  lp_cycle:'低功耗周期已开启', lp_cycle_off:'低功耗周期已关闭',
+                                  lp_cycle_done:'低功耗周期已跑完（回常在线）' };
                 const c = nameMap[a.cmd] || a.cmd;
                 el.textContent = '设备实际：' + c
-                    + (a.bright !== undefined ? '  亮度 ' + a.bright : '');
+                    + (!isLp && a.bright !== undefined ? '  亮度 ' + a.bright : '');
+            }
+            // 低功耗周期回执 → 更新周期状态条（设备随后会关 4G 进 Stop，本页断线属正常）
+            const ls = document.getElementById('lpState');
+            if (ls && isLp) {
+                if (a.cmd === 'lp_cycle') {
+                    lpOn = true;
+                    ls.innerHTML = '<span style="color:#4CAF50;">● 周期已开启</span> · 睡 '
+                        + lpPeriodSet + ' min × ' + (lpCyclesSet === 0 ? '无限' : lpCyclesSet + ' 轮')
+                        + '（每轮另加 ~1.5 min 会话）'
+                        + '<br><span style="color:#f9a825;">设备正在收尾入睡，本页即将断线（正常）</span>';
+                } else if (a.cmd === 'lp_cycle_done') {
+                    lpOn = false;
+                    ls.innerHTML = '<span style="color:#4CAF50;">● 周期已跑完</span> · 共 '
+                        + (a.cycles !== undefined ? a.cycles : lpCyclesSet)
+                        + ' 轮 · 设备已自动回到常在线';
+                } else {
+                    lpOn = false;
+                    ls.innerHTML = '<span style="color:#888;">● 周期已关闭</span> · 设备保持常在线';
+                }
             }
             // 用设备真实亮度校正滑块（别人改过 / 换了浏览器时能对上）
             if (a.bright !== undefined && ['red','yellow','green'].includes(a.cmd)) {
