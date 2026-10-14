@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>冷启动可靠性测试 — 8/8 PASS</title>
+<style>
+.backbtn{position:fixed;top:12px;right:14px;z-index:999;background:#2563eb;color:#fff;
+padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;
+box-shadow:0 2px 8px rgba(0,0,0,.22)}.backbtn:hover{opacity:.85}
+:root{--bg:#f8fafc;--card:#fff;--line:#e2e8f0;--tx:#1e293b;--mut:#64748b;--good:#059669;--bad:#b91c1c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7}
+.wrap{max-width:860px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:22px;margin:6px 0 2px}
+h2{font-size:17px;margin:28px 0 10px;border-left:4px solid #2563eb;padding-left:10px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin-bottom:14px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+th{background:#f1f5f9}
+.pass{color:var(--good);font-weight:bold}
+.kpi{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
+.kpi>div{flex:1;min-width:180px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+.kpi .lab{color:var(--mut);font-size:12.5px}
+.kpi .val{font-size:24px;font-weight:700;margin-top:2px}
+.note{border-radius:10px;padding:12px 16px;font-size:13.5px;margin:10px 0;border:1px solid}
+.note.good{background:#ecfdf5;border-color:#a7f3d0}
+.note.mut{background:#f8fafc;border-color:var(--line)}
+code{background:#f1f5f9;border-radius:4px;padding:1px 6px;font-size:12.5px}
+.mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<a class="backbtn" href="final-summary.html" title="返回最终总结">&#8592; 返回总结</a>
+<div class="wrap">
+  <h1>冷启动可靠性测试 — 8/8 PASS</h1>
+  <div class="sub">断电重上电后模组必须正常上报 · 继电器硬断电 × 8 次循环 · 2026-10-14 02:22–02:45 · 数据 <code>bench/data/coldboot_20261014_*</code> · 脚本 <code>bench/coldboot_test.py</code></div>
+
+  <div class="kpi">
+    <div><div class="lab">结果</div><div class="val pass">8/8 PASS</div></div>
+    <div><div class="lab">上电→4G 特征电流</div><div class="val">3.4–3.5 s</div></div>
+    <div><div class="lab">峰值电流范围</div><div class="val">78–89 mA</div></div>
+  </div>
+
+  <h2>一、结论</h2>
+  <div class="note good"><b>「断电重上电后模组正常上报」成立。</b>
+  连续 8 次继电器硬断电（断 10 s → 上电）后，每轮都在 150 s 观察窗内看到完整的
+  上电→注网→MQTT 上线→<code>ready</code> 过程，无一失败。</div>
+  <div class="note mut">10-13 夜里那次「PA3=0、固件未给 4G 上电」在 8 次冷启中<b>零复现</b>，
+  定性为<b>偶发单次事件</b>（最可疑：继电器切换瞬态 / 上电电源抖动），非固件系统性缺陷。
+  处置：保持观察，暂不加自愈代码；装车若想更保险，可加「上电 X 分钟无 ready → 自动重启模组」兜底。</div>
+
+  <h2>二、逐次明细</h2>
+  <div class="card">
+    <table>
+      <tr><th>冷启</th><th>4G 上线特征（&gt;40 mA）</th><th>MQTT 新 ready</th><th>峰值电流</th><th>判定</th></tr>
+      <tr><td>#1</td><td>✓</td><td>✓</td><td>78.0 mA</td><td class="pass">PASS</td></tr>
+      <tr><td>#2</td><td>✓</td><td>✓</td><td>82.0 mA</td><td class="pass">PASS</td></tr>
+      <tr><td>#3</td><td>✓</td><td>✓</td><td>88.9 mA</td><td class="pass">PASS</td></tr>
+      <tr><td>#4</td><td>✓</td><td>✓</td><td>81.5 mA</td><td class="pass">PASS</td></tr>
+      <tr><td>#5</td><td>✓</td><td>✓</td><td>81.2 mA</td><td class="pass">PASS</td></tr>
+      <tr><td>#6</td><td>✓</td><td>✓</td><td>85.7 mA</td><td class="pass">PASS</td></tr>
+      <tr><td>#7</td><td>✓</td><td>✓</td><td>82.4 mA</td><td class="pass">PASS</td></tr>
+      <tr><td>#8</td><td>✓</td><td>✓</td><td>88.8 mA</td><td class="pass">PASS</td></tr>
+    </table>
+  </div>
+
+  <h2>三、方法与判据</h2>
+  <div class="card">
+    <ul style="margin:0;padding-left:20px;font-size:13.5px">
+      <li><b>流程</b>：USB 继电器断电 10 s → 上电 → F-11 连续采样 150 s（≈10 Hz），共 8 循环，总耗时 22.6 min。</li>
+      <li><b>PASS 判据</b>（两条同时满足）：采样窗内出现 &gt;40 mA 的 4G 上线特征电流（搜网/注网/在线）；
+          且 MQTT 旁听日志出现新的 <code>ready</code>。</li>
+      <li><b>时序</b>：上电后 <b>3.4–3.5 s</b>（8 次几乎一致）出现 4G 特征电流 = 固件上电即拉高 PA3、
+          模组开始开机，与设计启动序列（<code>V4G_Init()</code> 立即 <code>V4G_Set(1)</code>）一致；
+          随后注网→上线→发 ready 完整走通。</li>
+      <li>峰值 78–89 mA 含 4G 上电浪涌（与 10-13 实测的 1.2 A 浪涌被 F-11 量程压缩后的口径一致）。</li>
+    </ul>
+  </div>
+
+  <h2>四、未完事项</h2>
+  <div class="card" style="font-size:13.5px">
+    <b>ICCID/uid 漂移仍未处理</b>：模组冷启后 <code>ready</code> 里的 id 曾从
+    <code>898608961026C0241530</code> 变为 <code>uid_066CFF51</code>，导致非 sys 指令
+    （payload 须含该 id）被静默丢弃。本轮 8 次冷启后 id 稳定为 ICCID（<code>ready id=898608961026C0241530</code>），
+    说明 uid 前缀也是偶发，但服务器侧/固件侧对未知 id 的容错策略仍值得加一条日志或回退逻辑。
+  </div>
+
+  <div class="card mut" style="font-size:12.5px">复现命令：<code>python bench/coldboot_test.py</code>
+  （改 <code>CYCLES</code> 调轮数）；耗时分析 <code>python bench/coldboot_latency.py</code>。
+  原始数据 <code>bench/data/coldboot_20261014_022213*.csv</code>。</div>
+</div>
+</body>
+</html>

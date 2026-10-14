@@ -58,9 +58,11 @@ def main():
     ap.add_argument("--only", type=int, default=0, help="只跑第 N 段（1/2/3）")
     ap.add_argument("--skip-plot", action="store_true")
     ap.add_argument("--poll", type=float, default=15.0)
+    ap.add_argument("--stamp", default=None,
+                    help="批次时间戳，多段分开跑时用同一个即可拼出一份报告")
     a = ap.parse_args()
 
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = a.stamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     data = os.path.join(HERE, "data")
     if not os.path.isdir(data):
         os.makedirs(data)

@@ -26,8 +26,13 @@ void     RTC_APP_Init(void);
 /* RTC 就绪（LSE 起振成功且 RTC 已使能） */
 uint8_t  RTC_APP_Ready(void);
 
-/* 挂闹钟：当前计数 + delay_s 秒后触发。0=成功，1=RTC 未就绪。 */
+/* 挂闹钟：当前计数 + delay_s 秒后触发。0=成功，1=RTC 未就绪，2=回读校验失败。
+ * ⚠ 内部会回读 ALR 校验；只有返回 0 才代表"唤醒源确实武装好了"。 */
 uint8_t  RTC_APP_ArmIn(uint32_t delay_s);
+
+/* 唤醒源是否已武装（ArmIn 成功后为 1，闹钟触发后清零）。
+ * ⚠ 进 Stop 前必须为 1，否则睡下无人能唤醒 = 变砖。 */
+uint8_t  RTC_APP_WakeArmed(void);
 
 /* 对表：把计数器写成绝对 epoch 秒。0=成功。 */
 uint8_t  RTC_APP_SetEpoch(uint32_t epoch);
@@ -45,5 +50,31 @@ uint8_t  RTC_APP_ParseNettime(const char *s, uint32_t *epoch);
 
 /* 由 stm32f1xx_it.c 的 RTC_Alarm_IRQHandler 调用 */
 void     RTC_APP_AlarmIRQ(void);
+
+/* ---- RTC 软看门狗（方案A："闹钟心跳 + token 判活"）----
+ * F1 只有一个 RTC 闹钟、IWDG 在 Stop 照跑且关不掉 ⇒ 用闹钟本身做狗：
+ * 任何 ArmIn()（睡眠/阶段/心跳）都算一次"推进"（token++），清醒期主循环
+ * 每 ≥1s 重装 +T 心跳；ISR 发现连续 2 发闹钟之间 token 没变 → BKP_DR1
+ * 打标记 + NVIC 复位（T=30s 时挂死后 ≤60s 自愈）。睡眠期主循环冻结是
+ * 安全的：睡前 ArmIn(sleep_s) 已 bump token。已知边界：关中断的死循环
+ * 救不了（无硬件狗兜底）。 */
+extern volatile uint32_t g_wdg_kick;   /* token：主流程推进计数（SWD 可读） */
+extern volatile uint32_t g_wdg_miss;   /* 连续未认领闹钟数（SWD 可读） */
+
+/* 使能看门狗并挂第一发心跳（RTC 未就绪则静默不启用） */
+void     RTC_APP_WDG_Start(uint32_t period_s);
+
+/* 运行中改配置：on=0 关闭；period_s=0 保持原周期 */
+void     RTC_APP_WDG_Set(uint8_t on, uint32_t period_s);
+
+/* 主循环清醒期喂狗（内部 ≥1s 节流重装 +T 心跳；睡眠期主循环冻结、不用调） */
+void     RTC_APP_WDG_Poll(uint32_t now_ms);
+
+uint8_t  RTC_APP_WDG_On(void);
+uint32_t RTC_APP_WDG_Period(void);
+
+/* 开机查询"上次复位是否看门狗所咬"（BKP_DR1 标记，读后自动清）。
+ * 须在 RTC_APP_Init() 之后调用（依赖 DBP 与 BKP 时钟）。 */
+uint8_t  RTC_APP_WasWdgReset(void);
 
 #endif /* RTC_APP_H */

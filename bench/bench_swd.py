@@ -70,6 +70,16 @@ RTC_CNT_ADDR = 0x40002818  # RTC_CNTH / RTC_CNTL
 #   不是两个 16 位拼在一个字里：读 2 个字 → w[0]=CNTH, w[1]=CNTL。
 
 
+# ⚠ DBGMCU_CR（0xE0042004）：OpenOCD 的 stm32f1x 驱动在 init 时会写入 0x307
+#   （DBG_SLEEP|DBG_STOP|DBG_STANDBY + trace 位），好让调试器跨低功耗模式保持连接。
+#   代价：Stop/WFI 里内核时钟不停 ⇒ 睡态虚增 ≈0.82 mA、Run(WFI) 虚增 ≈0.29 mA，
+#   而且退出调试器不清除（只有复位才清）⇒ 同一上电周期内所有功耗测量全部作废。
+#   因此每次 SWD 会话末尾必须清零并回读确认。
+#   （2026-10-13 定案：`docs/stop-1p03mA-rootcause.html`）
+DBGMCU_CR_ADDR = 0xE0042004
+DBG_KEEP = False          # True = 故意保留该位（仅当需要 SWD 在 Stop 里看住目标时）
+
+
 def rtc_of(w):
     return (w[0] & 0xFFFF) * 65536 + (w[1] & 0xFFFF)
 
@@ -89,7 +99,13 @@ class Swd(object):
                 "-c", "adapter driver cmsis-dap; transport select swd; adapter speed %d" % self.speed,
                 "-c", "gdb_port disabled; tcl_port disabled; telnet_port disabled",
                 "-f", "target/stm32f1x.cfg", "-c", "init"]
-        for c in cmds:
+        seq = list(cmds)
+        if not DBG_KEEP:
+            # 每次会话末尾清 DBGMCU_CR（OpenOCD 的 init 会把它置回 0x307）并回读确认。
+            # 注意：清位后 Stop 里 SWD 会失联（APB 断电），所以轮询落到睡段会失败 —— 正常。
+            seq += ["mww 0x%08x 0" % DBGMCU_CR_ADDR,
+                    "mdw 0x%08x 1" % DBGMCU_CR_ADDR]
+        for c in seq:
             args += ["-c", c]
         args += ["-c", "exit"]
         t0 = time.time()
@@ -265,7 +281,7 @@ def reconstruct_times(names, raws, dwells, wall_anchor):
 
 # -------------------------------------------------------------------- 主流程 ---
 def main():
-    global SLOG_WORDS_ADDR
+    global SLOG_WORDS_ADDR, DBG_KEEP
     ap = argparse.ArgumentParser()
     ap.add_argument("--cmd", default=None)
     ap.add_argument("--elf", default=DEFAULT_ELF)
@@ -277,9 +293,13 @@ def main():
     ap.add_argument("--no-f11", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--read-log", action="store_true")
+    ap.add_argument("--keep-dbg", action="store_true",
+                    help="保留 OpenOCD 写入的 DBGMCU_CR 调试保活位（睡态电流会虚增 ≈0.82 mA；"
+                         "仅在需要 SWD 在 Stop 里看住目标时用）")
     ap.add_argument("--remark", default=None, metavar="MARKERS_CSV",
                     help="用新算法重算既有 markers.csv 的时间轴（救回被 nettime 跳变压扁的数据）")
     a = ap.parse_args()
+    DBG_KEEP = bool(a.keep_dbg)
 
     # ---- 只重算既有 markers（不碰探针）----
     if a.remark:

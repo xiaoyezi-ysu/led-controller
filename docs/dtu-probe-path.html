@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>探活 `+++` 走的是哪条路 · 车牌光伏</title>
+<style>
+  :root{--ink:#1e293b;--mut:#64748b;--line:#e2e8f0;--bg:#f8fafc;--card:#ffffff;--acc:#2563eb;--ok:#059669;--warn:#b45309;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:var(--ink);background:var(--bg);line-height:1.7;padding:24px 16px}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:22px;margin-bottom:4px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:20px}
+  h2{font-size:16px;margin:26px 0 10px;padding-left:10px;border-left:4px solid var(--acc)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px}
+  .btn{display:inline-block;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:14px;cursor:pointer;font-weight:600}
+  .btn:hover{opacity:.88}
+  .detail{display:none;margin-top:14px}
+  .detail.open{display:block}
+  code{background:#eef2ff;border-radius:4px;padding:1px 6px;font-size:13px}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:12px 14px;font-size:12.5px;overflow-x:auto;margin:10px 0;line-height:1.6}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  .note{border-radius:8px;padding:10px 14px;font-size:13.5px;margin:10px 0}
+  .good{background:#ecfdf5;border:1px solid #a7f3d0}
+  .bad{background:#fffbeb;border:1px solid #fde68a}
+  svg{max-width:100%;height:auto;display:block;margin:10px auto}
+  .mut{color:var(--mut);font-size:12.5px}
+</style>
+</head>
+<body>
+<style>.backbtn{position:fixed;top:12px;right:14px;z-index:999;background:#2563eb;color:#fff;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.22)}.backbtn:hover{opacity:.85}</style>
+<a class="backbtn" href="final-summary.html" title="返回最终总结">&#8592; 返回总结</a>
+
+<div class="wrap">
+  <h1>探活 <code>+++</code> 走的是哪条路？</h1>
+  <div class="sub">DTU 控制路径 vs MQTT 数据路径 · 2026-10-14 · 批次背景：干净口径复测后备注</div>
+
+  <div class="card">
+    <p><b>一句话结论：`+++` 是发给模组的串口暗号，控制问答走 STM32 ↔ 模组两根串口线，不出网。</b>
+    MQTT 日志里能看到它，只是透传模式没拦住、漏了一份"字符副本"上去 —— 对服务器无任何作用。</p>
+    <p style="margin-top:12px">
+      <button class="btn" id="toggleBtn" onclick="toggleDetail()">展开详解 ▾</button>
+    </p>
+    <div class="detail" id="detail">
+      <h2>1 · 透传桥与 AT 模式</h2>
+      <p>银尔达 DTU 平时处于<b>透传模式</b>：串口字节 ⇄ MQTT 主题的双向桥。STM32 想查模组状态，必须先退出透传：</p>
+      <pre>+++          → 模组切到 AT 模式（透传桥暂停，需前后 1s 静默期）
+AT+ASTA?     → 模组本地解析，应答走串口原路返回，不出网
+AT+ENTM      → 切回透传桥</pre>
+
+      <h2>2 · 为什么 MQTT 日志里看得到 +++？</h2>
+      <p><code>+++</code> 本身只是三个字符，只有满足静默时序模组才认。本固件的收尾序列时序下，
+      模组<b>没拦住，把它当普通数据也桥了一份上网</b> —— 所以 broker 收到一条内容为 <code>+++</code> 的普通上报。</p>
+
+      <h2>3 · 决定性证据</h2>
+      <p>日志里 <code>+++</code> 和 <code>AT+ENTM</code> 每整 60 s 一对地漏上来，
+      但 <b><code>AT+ASTA?</code>（真正查状态的命令）从没在 MQTT 上出现过</b> ——
+      因为那时模组已在 AT 模式，命令被本地消化了。这恰好证明：AT 命令不出网、应答走串口，漏上去的只是两个"模式切换符"的副本。</p>
+
+      <h2>4 · 两条路径分工</h2>
+      <table>
+        <tr><th>路径</th><th>走哪里</th><th>干什么</th><th>关掉的后果</th></tr>
+        <tr><td><b>探活</b>（probe）</td><td>本地串口控制路径</td><td>查模组死活，用于故障自愈</td><td>模组坏了发现得慢</td></tr>
+        <tr><td><b>STM32 心跳</b></td><td>网络（每 15 s 发 <code>ready</code>）</td><td>向服务器报应用层存活</td><td>服务器只见"链路活着"</td></tr>
+        <tr><td><b>通道心跳包</b></td><td>网络（模组自己，配 120 s）</td><td>维持 TCP/MQTT 连接</td><td>连接断、收不到下行</td></tr>
+      </table>
+      <div class="note good"><b>推论</b>：探活与心跳都不影响"服务器下行指令能否到达、多快到达" —— 那条路由模组的通道心跳保着。
+      本项目已停用 STM32 的 15 s 心跳/探活，在线电流 60.7 → 17.4 mA（−75%）。</div>
+      <div class="note bad"><b>顺带的状态线索</b>：<code>+++</code>/<code>AT+ENTM</code> 每整 60 s 出现一次（01:07、01:08…），
+      说明板子正跑 lp_cycle 周期 1 min —— 每轮睡醒上报后执行一次收尾序列，正好可被 MQTT 旁听端当交叉验证用。</div>
+    </div>
+  </div>
+
+  <h2>路径示意</h2>
+  <div class="card">
+    <svg viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Microsoft YaHei,sans-serif">
+      <!-- 控制路径 -->
+      <rect x="20" y="20" width="140" height="52" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="90" y="42" text-anchor="middle" font-size="13" font-weight="bold" fill="#1e293b">STM32</text>
+      <text x="90" y="60" text-anchor="middle" font-size="10.5" fill="#64748b">应用核</text>
+
+      <rect x="270" y="20" width="140" height="52" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+      <text x="340" y="42" text-anchor="middle" font-size="13" font-weight="bold" fill="#1e293b">4G 模组</text>
+      <text x="340" y="60" text-anchor="middle" font-size="10.5" fill="#64748b">Air780EPM / 透传桥</text>
+
+      <rect x="520" y="20" width="140" height="52" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+      <text x="590" y="42" text-anchor="middle" font-size="13" font-weight="bold" fill="#1e293b">MQTT Broker</text>
+      <text x="590" y="60" text-anchor="middle" font-size="10.5" fill="#64748b">broker.emqx.io</text>
+
+      <!-- 串口控制路径 -->
+      <path d="M160 34 L270 34" stroke="#059669" stroke-width="2.5" fill="none" marker-end="url(#ag)"/>
+      <path d="M270 58 L160 58" stroke="#059669" stroke-width="2.5" fill="none" marker-end="url(#ag)"/>
+      <text x="215" y="26" text-anchor="middle" font-size="11" fill="#059669" font-weight="bold">+++ / AT+ASTA? / AT+ENTM</text>
+      <text x="215" y="76" text-anchor="middle" font-size="10.5" fill="#059669">应答走这里回来 · 不出网 ✓</text>
+
+      <!-- 数据路径（透传） -->
+      <path d="M410 40 L520 40" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 4" fill="none" marker-end="url(#ar)"/>
+      <path d="M520 52 L410 52" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 4" fill="none" marker-end="url(#ar)"/>
+      <text x="465" y="16" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="bold">透传数据 ⇄（report / 下行指令）</text>
+
+      <!-- 漏传副本 -->
+      <path d="M270 46 L520 96" stroke="#b45309" stroke-width="1.8" stroke-dasharray="3 4" fill="none" marker-end="url(#ao)"/>
+      <rect x="500" y="90" width="180" height="34" rx="6" fill="#fffbeb" stroke="#f59e0b"/>
+      <text x="590" y="104" text-anchor="middle" font-size="10.5" fill="#b45309">漏传副本："+++"（3 字符垃圾）</text>
+      <text x="590" y="118" text-anchor="middle" font-size="10.5" fill="#b45309">AT+ENTM 同理 · ASTA? 永不出现 ✓</text>
+
+      <!-- 说明区 -->
+      <rect x="20" y="130" width="640" height="196" rx="8" fill="#f1f5f9" stroke="#e2e8f0"/>
+      <text x="40" y="158" font-size="13" font-weight="bold" fill="#1e293b">时序（lp_cycle 一轮收尾）</text>
+      <text x="40" y="184" font-size="12" fill="#334155">睡醒 → 4G 上电 → 注网 → MQTT 发 report → +++（静默 1s）→ AT+ASTA?（串口应答）</text>
+      <text x="40" y="206" font-size="12" fill="#334155">→ nettime 授时 → AT+ENTM → V4G 断电 → 进 Stop 睡 60 s</text>
+      <text x="40" y="236" font-size="13" font-weight="bold" fill="#1e293b">判读口诀</text>
+      <text x="40" y="262" font-size="12" fill="#334155">· 日志见 "+++"/"AT+ENTM"：只是透传桥没拦住的字符副本，无意义</text>
+      <text x="40" y="284" font-size="12" fill="#334155">· AT 命令本体与应答：只存在于串口，MQTT 上永远看不到</text>
+      <text x="40" y="306" font-size="12" fill="#334155">· 60 s 一对 "+++"/"ENTM"：lp_cycle 周期 1 min 的活指纹，可做交叉验证</text>
+
+      <defs>
+        <marker id="ag" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#059669"/></marker>
+        <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#dc2626"/></marker>
+        <marker id="ao" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#b45309"/></marker>
+      </defs>
+    </svg>
+  </div>
+
+  <p class="mut" style="margin-top:16px">相关：根因报告 <code>stop-1p03mA-rootcause.html</code> · 压缩日 <code>dutycycle-day-test.html</code> ·
+  纯 CSS/SVG 零 CDN。</p>
+</div>
+
+<script>
+function toggleDetail(){
+  var d=document.getElementById('detail');
+  var b=document.getElementById('toggleBtn');
+  var open=d.classList.toggle('open');
+  b.textContent=open?'收起 ▴':'展开详解 ▾';
+  if(open)d.scrollIntoView({behavior:'smooth',block:'start'});
+}
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 #include "dtu.h"
 #include "rtc_app.h"
+#include "board_io.h"      /* V4G_Set：硬恢复里断/上 4G 模组电源用 */
 #include <string.h>
 #include <stdio.h>
 #include "rtc_app.h"       /* DTU_DebugProbe 里 nettime 对表用 */
@@ -27,6 +28,31 @@ static uint32_t tick = 0;
 static uint8_t id_tries = 0;
 static uint8_t ssta_tries = 0;
 static uint8_t ssta_retry = 0;   /* 探活重试计数：仅真离线才累加，避免误重启 */
+
+/* ---- 模组硬恢复（2026-10-14）---------------------------------------------
+ * 症状：断电重上电后模组偶发不启动，整板电流卡在 ~2.5 mA（Run + 死模组）
+ * 不上来，必须再手动插拔一次电源才恢复。
+ * 根因：驱动有两个"假装在线"出口——① 开机 ssta 轮询 20 次失败 → force READY；
+ *       ② 运行中探活失败 → 只发"软件"重启(config,set,save)。模组真死透时
+ *       UART 压根不解析命令，软重启必然无效 ⇒ 又绕回 ①。全程从不切 PA3。
+ * 修法：任何"模组一个字节都不回"的场合 ⇒ 断 PA3 硬拉电重走初始化；
+ *       连续 3 次仍不行则退避 5 min 再试（永不自弃，覆盖夜间无人值守）。
+ * 判定依据 g_4g_last_rx_ms（main.c 的 4G RX ISR 每次收到字节就刷新）。 */
+#ifndef V4G_POWER_CYCLE_MS
+#define V4G_POWER_CYCLE_MS   3000u     /* 硬断电时长 */
+#endif
+#ifndef V4G_COOLDOWN_MS
+#define V4G_COOLDOWN_MS      300000u   /* 连续失败后的退避 */
+#endif
+#define MODULE_SILENT_MS     100000u   /* 多久没有"像样应答"算死透（>探活周期 60s） */
+
+static uint8_t  v4g_try      = 0;      /* 本轮硬重拉次数 */
+static uint32_t v4g_cool_at  = 0;      /* 退避结束时刻（0=不在退避） */
+
+extern volatile uint32_t g_4g_last_rx_ms;   /* main.c: 4G RX ISR 刷新（收到任何字节） */
+
+/* dtu_module_silent() / dtu_hard_recover() 定义放在 DTU_Process 之前
+   （它们要用 dtu_clear_line / lp_reported / 状态机全局，见下方）。 */
 
 /* ---- 心跳保活：周期性发布 ready，避免 broker 因空闲清掉会话/订阅 ---- */
 #ifndef HB_PERIOD_MS
@@ -111,6 +137,29 @@ static void dtu_clear_line(void)
   dtu_line_ready = 0;
 }
 
+/* ⚠ 模组"死透"判据（2026-10-14 二次修正）：
+ * 不能用"有没有收到字节"——模组断电/未启动时其 TX 悬空，STM32 UART 会**持续**
+ * 收到随机噪声字节（实测挂死态 ~50 B/s），据此判活会把死模组当活的，硬恢复
+ * 永远不触发（正是"卡在 2.5mA 永不自愈"的闭环）。改为只认**像真应答的行**：
+ * 行内 ≥90% 可打印 + 含 config,/OK/ERROR/+ 等特征。 */
+volatile uint32_t g_dtu_valid_rx_ms = 0;   /* 最后一条"像样应答"的时刻 */
+
+static uint8_t dtu_line_looks_valid(void)
+{
+  if (dtu_line_len < 5u) return 0;
+  uint16_t printable = 0;
+  for (uint8_t i = 0; i < dtu_line_len; i++)
+  {
+    char c = dtu_line[i];
+    if (c >= 0x20 && c <= 0x7E) printable++;
+  }
+  if (printable * 10u < (uint16_t)dtu_line_len * 9u) return 0;   /* <90% 可打印 = 噪声 */
+  if (strstr(dtu_line, "config,")) return 1;
+  if (strstr(dtu_line, "OK") || strstr(dtu_line, "ERROR")) return 1;
+  if (dtu_line[0] == '+' || dtu_line[0] == '{') return 1;
+  return 0;
+}
+
 /* 由 UART RX 回调调用：仅在配置阶段捕获模块应答 */
 void DTU_RxByte(uint8_t b)
 {
@@ -120,6 +169,7 @@ void DTU_RxByte(uint8_t b)
   if (b == '\n' || b == '\r')
   {
     dtu_line[dtu_line_len] = '\0';
+    if (dtu_line_looks_valid()) g_dtu_valid_rx_ms = HAL_GetTick();
     dtu_line_ready = 1;
   }
 }
@@ -271,9 +321,57 @@ uint8_t DTU_QueryNettime(uint32_t *epoch)
   return ok;
 }
 
+/* ---- 模组硬恢复 helper（定义在此：需用 dtu_clear_line / lp_reported /
+        ssta_tries / tick / _4g_state，都是本文件前面的全局）------------------ */
+
+/* 模组是否"死透"：MODULE_SILENT_MS 内没有收到任何"像样的应答行"。
+   （不看字节数——悬空 TX 噪声会持续刷新字节计数，见 g_dtu_valid_rx_ms 注释）
+   窗口取 100s > 探活周期 60s，保证健康模组（每次探活都有 config,ssta,ok,4）
+   永远不会被误判。 */
+static uint8_t dtu_module_silent(void)
+{
+  uint32_t last = g_dtu_valid_rx_ms;
+  if (last == 0) return 1;                     /* 从未收到过像样应答 */
+  return (uint32_t)(HAL_GetTick() - last) > MODULE_SILENT_MS;
+}
+
+/* 硬重拉模组电源 + 从头走初始化。now = 当前 tick。 */
+static void dtu_hard_recover(uint32_t now)
+{
+  v4g_try++;
+  printf("DTU: module unresponsive -> HARD power-cycle V4G (try %u)%s\r\n",
+         (unsigned)v4g_try, v4g_try >= 3u ? " then cooldown 5min" : "");
+  V4G_Set(0);                       /* 断模组电 */
+  HAL_Delay(V4G_POWER_CYCLE_MS);
+  V4G_Set(1);                       /* 重新上电，走正常注网 */
+  dtu_clear_line();
+  json_len = 0; json_ready = 0;
+  ssta_tries = 0; ssta_retry = 0;
+  lp_reported = 0;                  /* READY 后重新上报一次 lp 回执 */
+  tick = HAL_GetTick();
+  _4g_state = _4G_POWER_ON;         /* 从头下发参数 */
+  if (v4g_try >= 3u)
+  {
+    v4g_try = 0;
+    v4g_cool_at = now + V4G_COOLDOWN_MS;
+    printf("DTU: still failing -> cool down %lum, will retry automatically\r\n",
+           (unsigned long)(V4G_COOLDOWN_MS / 60000u));
+  }
+}
+
 void DTU_Process(uint32_t now)
 {
   (void)DTU_FORCE_RECONFIG; /* 当前每次上电均重配（见文件头说明） */
+
+  /* 硬恢复退避中：静默等待（避免无人值守时把模组反复拉电） */
+  if (v4g_cool_at)
+  {
+    if ((int32_t)(now - v4g_cool_at) < 0) return;
+    v4g_cool_at = 0;
+    printf("DTU: cooldown over -> retry module\r\n");
+    dtu_hard_recover(now);
+    return;
+  }
 
   /* 进入 READY（透传）后：周期性心跳保活 + 链路探活自愈。
      睡眠模式下两者均跳过——4G 模组自身的 MQTT keepalive 已维持服务器连接，
@@ -323,11 +421,20 @@ void DTU_Process(uint32_t now)
         }
         else
         {
-          printf("DTU: probe failed x2 -> reboot module (config,set,save)\r\n");
-          dtu_clear_line();
-          dtu_send("config,set,save");
-          tick = HAL_GetTick();
-          _4g_state = _4G_WAIT_BOOT;
+          if (dtu_module_silent())
+          {
+            /* 模组一个字节都不回：软重启命令根本没被解析，必须硬拉电 */
+            printf("DTU: probe failed x2 + module silent -> hard power-cycle\r\n");
+            dtu_hard_recover(HAL_GetTick());
+          }
+          else
+          {
+            printf("DTU: probe failed x2 -> reboot module (config,set,save)\r\n");
+            dtu_clear_line();
+            dtu_send("config,set,save");
+            tick = HAL_GetTick();
+            _4g_state = _4G_WAIT_BOOT;
+          }
         }
         return;
       }
@@ -588,12 +695,21 @@ void DTU_Process(uint32_t now)
         }
       }
       ssta_tries++;
-      if (ssta_tries > 20)   /* ~60s 仍未连上，强制进入透传，避免卡死 */
+      if (ssta_tries > 20)   /* ~60s 仍未连上 */
       {
         json_len = 0;
         json_ready = 0;
         memset(json_buf, 0, sizeof(json_buf));
-        printf("DTU: force READY (ssta timeout)\r\n");
+        if (dtu_module_silent())
+        {
+          /* 超时 + 全程零应答 ⇒ 模组没起来。旧版这里直接 force READY
+             "假装在线"，整板便停在 ~2.5mA 永不自愈（实测症状）。
+             现在硬拉电重走初始化。 */
+          printf("DTU: ssta timeout + module silent -> hard power-cycle\r\n");
+          dtu_hard_recover(now);
+          break;
+        }
+        printf("DTU: force READY (ssta timeout, module alive but not connected)\r\n");
         hb_tick = now;
         _4g_state = _4G_READY;
         break;

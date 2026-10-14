@@ -17,6 +17,10 @@
  * ========================================================================= */
 
 volatile uint8_t g_rtc_alarm_hit = 0;
+volatile uint32_t g_wdg_kick = 0;      /* 软看门狗 token：ArmIn/Poll 累加 */
+volatile uint32_t g_wdg_miss = 0;      /* 软看门狗连续未认领闹钟数（SWD 可观测） */
+static volatile uint32_t g_wdg_arm_kick = 0; /* 装当前这发闹钟时的 token 快照 */
+static uint8_t s_wake_armed = 0;             /* 1 = 已武装有效闹钟（可安全进 Stop） */
 static uint8_t s_rtc_ok = 0;
 
 #define RTC_EXTI_LINE   (1u << 17)
@@ -131,7 +135,107 @@ uint8_t RTC_APP_ArmIn(uint32_t delay_s)
   RTC->ALRL = al & 0xFFFFu;
   RTC->CRH |= RTC_CRH_ALRIE;   /* F1 无 ALRE 位：闹钟比较器恒开，使能中断即可 */
   rtc_exit_cfg();
+
+  /* ⚠ 回读校验（2026-10-14 加固）：ALR 写失败/被覆盖 = 睡下就永远醒不来。
+     这是整板"不变砖"目标的最后一道保险，读回不一致就不许进 Stop。 */
+  {
+    uint32_t rb = ((uint32_t)RTC->ALRH << 16) | (uint32_t)RTC->ALRL;
+    if (rb != al)
+    {
+      printf("RTC: ALR readback MISMATCH (want %lu got %lu) -> NOT armed\r\n",
+             (unsigned long)al, (unsigned long)rb);
+      s_wake_armed = 0;
+      return 2;
+    }
+  }
+  s_wake_armed = 1;
+
+  /* 软看门狗 token：每次安排新闹钟（睡眠闹钟/心跳重装）都算"主流程推进了一步"。
+     g_wdg_arm_kick 记下"装这发闹钟时的 token"，ISR 用它判断：闹钟触发时
+     token 是否还停在装钟那一刻 —— 是 ⇒ 这段时间里没有任何推进 ⇒ 挂死。
+     （不能比"ISR 上次见到的值"：挂死前主循环的踢狗会让第一发闹钟永远
+       误判为活着，白白多等一个周期。） */
+  g_wdg_kick++;
+  g_wdg_arm_kick = g_wdg_kick;
   return 0;
+}
+
+uint8_t RTC_APP_WakeArmed(void) { return (s_rtc_ok && s_wake_armed) ? 1u : 0u; }
+
+/* ===========================================================================
+ * RTC 软看门狗（方案A："闹钟心跳 + token 判活"，Stop 睡眠零代价）
+ *
+ * 背景：F1 只有一个 RTC 闹钟；IWDG 在 Stop 里照跑且满档仅 26.2s，撑不过
+ *       分钟级睡眠，一旦开启还关不掉 —— 硬件狗与本板低功耗架构天然冲突。
+ * 原理：
+ *   - 任何 RTC_APP_ArmIn()（睡眠闹钟 / 心跳重装）都令 g_wdg_kick++（token）；
+ *   - 清醒期主循环调 RTC_APP_WDG_Poll()，≥1s 节流重装一次 +T 心跳闹钟；
+ *   - ISR：若本次闹钟触发时 token 自上次闹钟以来没变 → 没有任何阶段推进过
+ *     → miss++；连续超 RTC_WDG_MAX_MISS 次 → BKP_DR1 打标记 + NVIC 复位；
+ *   - 睡眠期主循环冻结是安全的：睡前 ArmIn(sleep_s) 已 bump 过 token，
+ *     唤醒那发闹钟看到的是"变了的 token"，不会误咬。
+ * 已知边界：__disable_irq() 的死循环救不了（纯软件方案无硬件兜底）。
+ * ========================================================================= */
+#define RTC_WDG_MAX_MISS   1u        /* 连续 2 发闹钟无人认领 → 复位（≤2T） */
+#define RTC_WDG_BKP_MAGIC  0x5A5Au   /* BKP_DR1 标记：本次复位是看门狗咬的 */
+
+static uint8_t   s_wdg_en     = 0;
+static uint32_t  s_wdg_period = 30u;
+static uint32_t  s_wdg_last_ms = 0;  /* Poll 节流 */
+
+/* 装闹钟但不动 token（供 ISR 心跳重装用，流程同 ArmIn） */
+static void wdg_arm_nobump(uint32_t delay_s)
+{
+  RTC->CRL &= (uint16_t)~RTC_CRL_ALRF;
+  EXTI->PR = RTC_EXTI_LINE;
+  uint32_t al = RTC_APP_GetEpoch() + delay_s;
+  rtc_enter_cfg();
+  RTC->ALRH = al >> 16;
+  RTC->ALRL = al & 0xFFFFu;
+  RTC->CRH |= RTC_CRH_ALRIE;
+  rtc_exit_cfg();
+  g_wdg_arm_kick = g_wdg_kick;   /* 重装的心跳同样记录"装钟时刻的 token" */
+}
+
+void RTC_APP_WDG_Start(uint32_t period_s)
+{
+  if (!s_rtc_ok) return;
+  s_wdg_period = period_s ? period_s : 30u;
+  s_wdg_en = 1;
+  g_wdg_miss = 0;
+  RTC_APP_ArmIn(s_wdg_period);       /* 第一发心跳（顺带 bump token + 记 arm_kick） */
+}
+
+void RTC_APP_WDG_Set(uint8_t on, uint32_t period_s)
+{
+  s_wdg_en = on;
+  if (period_s) s_wdg_period = period_s;
+  if (on && s_rtc_ok)
+  {
+    g_wdg_miss = 0;
+    RTC_APP_ArmIn(s_wdg_period);
+  }
+}
+
+uint8_t  RTC_APP_WDG_On(void)      { return s_wdg_en; }
+uint32_t RTC_APP_WDG_Period(void)  { return s_wdg_period; }
+
+/* 主循环清醒期喂狗：≥1s 节流，重装 +T 心跳（ArmIn 内部 bump token） */
+void RTC_APP_WDG_Poll(uint32_t now_ms)
+{
+  if (!s_wdg_en || !s_rtc_ok) return;
+  if ((now_ms - s_wdg_last_ms) < 1000u) return;
+  s_wdg_last_ms = now_ms;
+  RTC_APP_ArmIn(s_wdg_period);
+}
+
+/* 开机查询"上次复位是不是看门狗咬的"（BKP_DR1 在 VBAT 域，软件复位不清零）。
+ * 读后自动清标记。须在 RTC_APP_Init() 之后调（要 DBP + BKP 时钟）。 */
+uint8_t RTC_APP_WasWdgReset(void)
+{
+  uint8_t r = (BKP->DR1 == RTC_WDG_BKP_MAGIC) ? 1u : 0u;
+  if (r) { BKP->DR1 = 0; BKP->DR2 = 0; }
+  return r;
 }
 
 void RTC_APP_AlarmIRQ(void)
@@ -140,6 +244,35 @@ void RTC_APP_AlarmIRQ(void)
   {
     RTC->CRL &= (uint16_t)~RTC_CRL_ALRF;    /* 清标志，否则 IRQ 重入 */
     g_rtc_alarm_hit = 1;
+    s_wake_armed = 0;                       /* 这发闹钟已消耗，等主流程重新武装 */
+
+    if (s_wdg_en)
+    {
+      /* token 还停在装这发闹钟的时刻 ⇒ 这段时间主流程零推进 ⇒ 挂死。
+         注意：正常睡眠唤醒的那发闹钟也会命中本分支（睡前 ArmIn 记的
+         arm_kick 就是当前 token）⇒ 记 1 次 miss，随后主循环一踢狗即清零；
+         MAX_MISS=1 下只有"连续两发都没人认领"才会真复位（≤2T=60s）。 */
+      if (g_wdg_kick == g_wdg_arm_kick)
+      {
+        g_wdg_miss++;
+        if (g_wdg_miss > RTC_WDG_MAX_MISS)
+        {
+          RCC->APB1ENR |= RCC_APB1ENR_BKPEN;   /* 防呆：确保 BKP 时钟在 */
+          HAL_PWR_EnableBkUpAccess();
+          BKP->DR1 = RTC_WDG_BKP_MAGIC;
+          BKP->DR2 = (uint16_t)g_wdg_miss;
+          NVIC_SystemReset();
+          return;
+        }
+      }
+      else
+      {
+        g_wdg_miss = 0;
+      }
+      /* 主流程活着/正常睡眠唤醒：重装 +T 心跳。
+         若主流程随后 ArmIn 阶段闹钟会覆盖本次心跳，无害。 */
+      wdg_arm_nobump(s_wdg_period);
+    }
   }
   EXTI->PR = RTC_EXTI_LINE;                  /* 清 EXTI 挂起 */
 }

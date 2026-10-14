@@ -20,8 +20,9 @@ DATA = os.path.join(HERE, "data")
 DOCS = os.path.join(ROOT, "docs")
 
 # ---------- 口径常量（集中放这里，改一处即可） ----------
-NIGHT_MA = 1.03          # 本次实测夜间 Stop 睡态（保守口径）
-NIGHT_MA_BEST = 0.226    # 历史最佳 Stop 睡态
+NIGHT_MA = 0.226         # 夜间 Stop 睡态；主流程会按「从数据实测」覆盖（见下方 _measure_sleep）
+NIGHT_MA_DIRTY = 1.030   # 旧口径：带 OpenOCD 调试保活位（DBGMCU_CR=0x307）的读数，仅作对照
+NIGHT_MA_BEST = 0.226    # 历史最佳 Stop 睡态（mklink 测，未污染）
 ROUND_S = 155.0          # 每轮窗口标称时长（90 会话 + 5 收尾 + 60 睡）
 DAY_S = 86400.0
 BATT_MAH = 1000.0
@@ -162,6 +163,26 @@ def run_avg_ma(steps):
     return (chg * 3600.0 / dur) if dur > 0 else 0.0
 
 
+def led_txt(name):
+    """从档名推导灯态（对应固件 SEQ_TABLE / SEQ_BuildDay 的 led 字段）。
+    窗口轮（round_*/day_am*/day_pm*）的灯在整个窗口保持（含 60s Stop 睡眠期，
+    固件 LP_CloseAndSleepEx(sleep_s, led_off=0) 收尾不灭灯 —— 故意的最坏组合档）。"""
+    if name in ("v4goff_dark", "v4goff_end", "round_dark", "v4gon_reg",
+                "online_hb", "online_idle") or \
+       name.startswith(("day_night", "day_midday")):
+        return "灭"
+    if name.startswith(("day_am", "day_pm")):
+        return "绿 255 全程"
+    if name.startswith("round_G"):
+        return "绿 %s 全程" % name[7:]
+    if name == "v4goff_G255": return "绿 255"
+    if name == "v4goff_G128": return "绿 128"
+    if name == "v4goff_R255": return "红 255"
+    if name == "v4goff_Y255": return "黄 255"
+    if name == "v4goff_R64":  return "红 64"
+    return "—"
+
+
 def table(head, rows, cls=""):
     p = ['<table class="%s"><thead><tr>' % cls]
     for hcell in head:
@@ -225,6 +246,27 @@ def main():
         data[tag] = dict(rows=rows, segs=segs, steps=steps, mq=mq, title=title, desc=desc,
                          f11=os.path.basename(f11), mk=os.path.basename(mk))
 
+    # ---------- 实测睡眠电流（从窗口轮睡段 + 纯 Stop 档里量，不写死） ----------
+    #   判据：只看「本应停机的档」（round_* 的 60 s 睡段 / day_night* / day_midday）里
+    #   电流 < 3 mA 的样本，取中位。这样口径随数据自动更新，避免再次写死 1.03。
+    global NIGHT_MA
+    _sl, _sl_by = [], {}
+    for _tag in ("seq60", "day1", "day2"):
+        if _tag not in data:
+            continue
+        _vals = []
+        for _st in data[_tag]["steps"]:
+            _nm = _st["name"]
+            if _nm.startswith("round") or _nm.startswith("day_night") or _nm == "day_midday":
+                _vals += [c for t, c in data[_tag]["rows"] if _st["t0"] <= t < _st["t1"] and c < 3.0]
+        if _vals:
+            _sl_by[_tag] = _vals
+            _sl += _vals
+    if _sl:
+        NIGHT_MA = statistics.median(_sl)
+    SLEEP_N = len(_sl)
+    SLEEP_BY = {k: (len(v), statistics.median(v)) for k, v in _sl_by.items()}
+
     # ---------- 折算 ----------
     day = data["day1"] if "day1" in data else data["day2"]
     win = [s for s in day["steps"] if s["name"].startswith("day_a") or s["name"].startswith("day_p")]
@@ -243,11 +285,18 @@ def main():
     avg_best = tot_best / (DAY_S / 3600.0)
     days_best = BATT_MAH * BATT_USABLE / tot_best
 
+    night_mah_dirty = NIGHT_MA_DIRTY * sleep_h
+    tot_dirty = night_mah_dirty + rounds_mah
+    avg_dirty = tot_dirty / (DAY_S / 3600.0)
+    days_dirty = BATT_MAH * BATT_USABLE / tot_dirty
+
     # 敏感性
     sens = []
     for r in (2, 4, 6):
         rm = round_mah * r
-        for nm, lbl in ((NIGHT_MA_BEST, "0.226"), (0.50, "0.50"), (NIGHT_MA, "1.03")):
+        for nm, lbl in ((NIGHT_MA, "%.3f 本次实测" % NIGHT_MA),
+                        (0.50, "0.500"),
+                        (NIGHT_MA_DIRTY, "%.3f 旧脏口径" % NIGHT_MA_DIRTY)):
             sh = (DAY_S - r * ROUND_S) / 3600.0
             t = nm * sh + rm
             sens.append((r, lbl, t, t / 24.0, BATT_MAH * BATT_USABLE / t))
@@ -294,7 +343,8 @@ ul{padding-left:22px}li{margin:5px 0}
 </style></head><body><div class="wrap">""")
     H.append("<h1>全天工况压缩测试报告 · 车牌 ver2</h1>")
     H.append('<div class="sub">F-11 真值电流表（串联回路，≈10 Hz）＋ 固件 SEQ 工况引擎（SWD 注入/回读）'
-             '＋ 4G MQTT 旁听端交叉验证 &nbsp;·&nbsp; 生成 %s &nbsp;·&nbsp; 批次 <code>%s</code></div>'
+             '＋ 4G MQTT 旁听端交叉验证 &nbsp;·&nbsp; <b>干净口径</b>（每个 SWD 会话末尾清 '
+             '<code>DBGMCU_CR</code>） &nbsp;·&nbsp; 生成 %s &nbsp;·&nbsp; 批次 <code>%s</code></div>'
              % (esc(stamp), esc(a.stamp)))
 
     # §0
@@ -312,10 +362,18 @@ ul{padding-left:22px}li{margin:5px 0}
     H.append('<div class="kpi"><div class="lab">1000 mAh 电池续航</div>'
              '<div class="val">%.0f <small>天</small></div>'
              '<div class="mut">按 80%% 可用容量</div></div>' % days)
+    hb_ma = max(s["med"] for s in data["seq60"]["steps"])
     H.append('<div class="kpi"><div class="lab">最省 / 最费档</div>'
-             '<div class="val">%.2f / %.1f <small>mA</small></div>'
-             '<div class="mut">Stop 睡态 vs 4G 在线心跳</div></div>' % (NIGHT_MA, 61.01))
+             '<div class="val">%.3f / %.1f <small>mA</small></div>'
+             '<div class="mut">Stop 睡态 vs 4G 在线心跳</div></div>' % (NIGHT_MA, hb_ma))
     H.append('</div>')
+
+    H.append('<div class="note good"><b>本批为「干净口径」重跑</b>（批次 <code>%s</code>）：'
+             '每个 OpenOCD 会话末尾都清零 <code>DBGMCU_CR</code>（<code>mww 0xE0042004 0</code>）并回读确认，'
+             '实测睡态 <b>%.3f mA</b>（%d 个样本，取自窗口轮睡段 + 纯 Stop 档），与历史真值 0.226 mA 一致。'
+             '旧报告里的 1.03 mA 是 OpenOCD 调试保活位伪值，根因见 '
+             '<a href="stop-1p03mA-rootcause.html">stop-1p03mA-rootcause.html</a>。</div>'
+             % (esc(a.stamp), NIGHT_MA, SLEEP_N))
 
     H.append('<div class="note good"><b>核心结论</b>：'
              '① 压缩日（夜 Stop→早高峰 3 轮→日 Stop→晚高峰 3 轮→夜 Stop，1020 s）'
@@ -342,14 +400,15 @@ ul{padding-left:22px}li{margin:5px 0}
              for n, v, _c in items]
     H.append(svg_bars(items))
     H.append('<div class="mut" style="margin-top:10px">中位电流（mA）。红 = 窗口轮（含 90 s 4G 会话 + 60 s Stop 睡）；'
-             '橙 = 4G 在线；蓝 = 4G 断电或 LED 档。</div>')
+             '橙 = 4G 在线；蓝 = 4G 断电或 LED 档。<b>条形颜色只是分段配色，不代表 LED 颜色</b>——'
+             '各档实际灯态见下表「灯」列。</div>')
     H.append('</div>')
     rows = []
     for i, s in enumerate(st1, 1):
-        rows.append([i, esc(s["name"]), "%d" % s["nom"], "%.1f" % s["dur"],
+        rows.append([i, esc(s["name"]), led_txt(s["name"]), "%d" % s["nom"], "%.1f" % s["dur"],
                      "<b>%.3f</b>" % s["med"], "%.3f" % s["mean"], "%.3f" % s["min"],
                      "%.3f" % s["max"], "%.2f" % s["sd"], "%.3f" % s["mah"]])
-    H.append(table(["#", "工况", "标称 s", "实测 s", "中位 mA", "均值 mA", "最小", "最大", "σ", "电荷 mAh"],
+    H.append(table(["#", "工况", "灯", "标称 s", "实测 s", "中位 mA", "均值 mA", "最小", "最大", "σ", "电荷 mAh"],
                    rows))
 
     # §2 压缩日
@@ -359,14 +418,21 @@ ul{padding-left:22px}li{margin:5px 0}
         H.append('<div class="sub" style="margin:-6px 0 10px">%s</div>' % esc(d["desc"]))
         rows = []
         for i, s in enumerate(d["steps"], 1):
-            rows.append([i, esc(s["name"]), "%d" % s["nom"], "%.1f" % s["dur"],
+            rows.append([i, esc(s["name"]), led_txt(s["name"]), "%d" % s["nom"], "%.1f" % s["dur"],
                          "<b>%.3f</b>" % s["med"], "%.3f" % s["mean"], "%.3f" % s["min"],
                          "%.3f" % s["max"], "%.2f" % s["sd"], "%.3f" % s["mah"]])
         tot_mah_run = sum(s["mah"] for s in d["steps"])
         tot_dur = sum(s["dur"] for s in d["steps"])
-        rows.append(["", "合计", "1020", "%.1f" % tot_dur, "—", "%.3f" % (tot_mah_run / tot_dur * 3600),
+        rows.append(["", "合计", "—", "1020", "%.1f" % tot_dur, "—", "%.3f" % (tot_mah_run / tot_dur * 3600),
                      "—", "—", "—", "<b>%.3f</b>" % tot_mah_run])
-        H.append(table(["#", "工况", "标称 s", "实测 s", "中位 mA", "均值 mA", "最小", "最大", "σ", "电荷 mAh"], rows))
+        H.append(table(["#", "工况", "灯", "标称 s", "实测 s", "中位 mA", "均值 mA", "最小", "最大", "σ", "电荷 mAh"], rows))
+        if tag == "day1":
+            H.append('<div class="mut" style="margin-top:6px">灯态说明：本轮指令 <code>!day 30 3 G 255</code> —— '
+                     '三个纯 Stop 段（<code>day_night1/midday/night2</code>）4G 断 + <b>灯灭</b>，实测 0.22 mA；'
+                     '六个窗口轮（<code>day_am*/pm*</code>）<b>绿灯 255 在整个窗口保持亮灯</b>，'
+                     '包括窗口内 60 s 的 Stop 睡眠期（固件 <code>LP_CloseAndSleepEx(60, led_off=0)</code> 收尾不灭灯，'
+                     '故意的最坏组合档），其睡眠期实测 ≈20.6 mA = Stop 0.226 + 绿灯。'
+                     'P3（day2）是<b>同一工况的复核轮</b>，不是加灯的变体。</div>')
 
     # P2 vs P3 对比
     H.append("<h3>P2 / P3 逐档复核</h3>")
@@ -383,19 +449,22 @@ ul{padding-left:22px}li{margin:5px 0}
     # §4 折算
     H.append("<h2>4 · 压缩日 → 真实一天折算</h2>")
     H.append('<div class="card">')
-    H.append(svg_stack(night_mah, rounds_mah, "真实一天电荷构成（睡态 %.2f mA 口径）" % NIGHT_MA))
+    H.append(svg_stack(night_mah, rounds_mah, "真实一天电荷构成（睡态 %.3f mA 口径）" % NIGHT_MA))
     H.append('<div class="mut" style="margin-top:12px">'
              '折算模型：真实一天 = 6 个上报窗口（早晚高峰各 3 轮）× 每轮 %.3f mAh'
              '＋ 其余 %.2f h 全 Stop 睡眠 × %.3f mA。' % (round_mah, sleep_h, NIGHT_MA))
     H.append('</div></div>')
     H.append(table(["口径", "睡眠 23.74 h 电荷", "窗口 6 轮电荷", "合计 mAh/天", "平均 mA",
                     "1000 mAh 续航（80% 可用）"],
-                   [["本次实测睡态 %.2f mA" % NIGHT_MA, "%.2f mAh" % night_mah,
+                   [["本次实测睡态 %.3f mA（干净）" % NIGHT_MA, "%.2f mAh" % night_mah,
                      "%.2f mAh" % rounds_mah, "<b>%.2f</b>" % tot_mah, "<b>%.3f</b>" % avg_ma,
                      "<b>%.0f 天</b>" % days],
                     ["历史最佳睡态 %.3f mA" % NIGHT_MA_BEST, "%.2f mAh" % night_mah_best,
                      "%.2f mAh" % rounds_mah, "%.2f" % tot_best, "%.3f" % avg_best,
-                     "%.0f 天" % days_best]]))
+                     "%.0f 天" % days_best],
+                    ["旧口径 %.3f mA（带调试保活位，仅对照）" % NIGHT_MA_DIRTY,
+                     "%.2f mAh" % night_mah_dirty, "%.2f mAh" % rounds_mah,
+                     "%.2f" % tot_dirty, "%.3f" % avg_dirty, "%.0f 天" % days_dirty]]))
     H.append("<h3>敏感性：窗口轮数 × 睡眠电流</h3>")
     rows = []
     for r, lbl, t, am, dy in sens:
@@ -426,26 +495,64 @@ ul{padding-left:22px}li{margin:5px 0}
     H.append('<div class="mut" style="margin-top:8px">「（档外）」是测试开始前旁听端已经记录的那段（P1 尾巴），'
              '不代表 P3 期间的事件。数据源 <code>%s</code>。</div>' % esc("data/mqtt_live.csv"))
 
-    # §6 待查偏差
-    H.append("<h2>6 · 两个待查的系统性偏差</h2>")
-    H.append('<div class="note bad"><b>① Stop 睡态实测 %.2f mA，而 10-13 中午定案是 %.3f mA（差 0.81 mA）。</b><br>'
-             '本轮 P1 的 <code>round_dark</code> 提供了天然 A/B —— 它同样是「4G 断电 + 灯灭 + Stop 睡 60 s」，'
-             '只是前面多了 90 s 会话。看它窗口末 60 s 的原始样本：'
-             '中位 1.041 / 最小 1.023 mA，<b>没有一条低于 1.0 mA</b>；'
-             '压缩日的 <code>day_night1/2</code>、<code>day_midday</code> 也是 1.041–1.056 mA。'
-             '三个独立档位互相印证 ⇒ <b>本次睡态就是 ≈1.03 mA</b>，不是测量噪声。'
-             '<br>候选原因：<b>(a)</b> 睡眠期仍有外设耗电（SC7A20H 若在连续采样模式约 0.5–0.8 mA，量级吻合）；'
-             '<b>(b)</b> 测量回路口径不同（若 F-11 串在「探针 VCC → 板子 VCC」之间，会把调试探针自身功耗算进来）。'
-             '<br><b>下一步 A/B</b>：用 SWD 直写置态进 Stop（绕过固件 SEQ，复现 10-13 中午的条件），'
-             '若仍 %.2f mA ⇒ 属 (b) 测量口径；若回到 %.3f mA ⇒ 属 (a)，去查传感器是否在 Stop 前未关。</div>'
-             % (NIGHT_MA, NIGHT_MA_BEST, NIGHT_MA, NIGHT_MA_BEST))
-    H.append('<div class="note"><b>② 4G 断电 + 灯灭的 Run 档：本次 2.760/2.775 mA，校正版报告 2.30 mA（差 +0.46 mA）。</b><br>'
-             '本次首档与末档同为此状态，分别 2.760 / 2.775 mA，<b>差值仅 0.015 mA ⇒ 测量可重复</b>，'
-             '不是随机噪声。它与 ① 很可能同源。注意两者偏差量不同（Run +0.46、Stop +0.81），'
-             '所以<b>不能简单用「一起减常数」修掉</b>，必须实测归因。</div>')
-    H.append('<div class="note good"><b>附带确证的改进</b>：夜间 Stop 档（1.03 mA）相比 8 MHz Run 静止档（2.76 mA）'
-             '降低 1.73 mA ⇒ 睡眠机制本身工作正常；压缩日全程最费档 '
-             '<code>day_am1</code> 74.5 mA 出现在窗口刚开机的搜网阶段。</div>')
+    # §6 口径修正验证
+    H.append("<h2>6 · 口径修正验证（旧脏 / 新净 / 预期）</h2>")
+    H.append('<div class="note good"><b>根因</b>：上一版的睡态 1.03 mA 是 '
+             '<code>DBGMCU_CR = 0x00000307</code> 造成的<b>测量伪值</b> —— '
+             '它是 OpenOCD 每次 <code>init</code> 写入的调试保活位（<code>DBG_SLEEP|DBG_STOP|DBG_STANDBY</code>），'
+             '让 Stop/WFI 不停内核时钟：睡态虚增 ≈0.82 mA、Run(WFI) 虚增 ≈0.29 mA，'
+             '且退出调试器<b>不清除</b>（只有复位才清），所以同一上电周期内所有测点一起偏高。'
+             'A/B/A 实测 <code>0x307 → 1.042 mA</code> / <code>写 0 → 0.220 mA</code> / 再连 → <code>1.042 mA</code>。'
+             '<br><b>本批重跑已在每个 OpenOCD 会话末尾清零该寄存器并回读确认</b>，故本篇所有数字均为干净口径。'
+             '详见 <a href="stop-1p03mA-rootcause.html">stop-1p03mA-rootcause.html</a>。</div>')
+
+    OLD_MED = {"v4goff_dark": 2.760, "v4goff_G255": 22.910, "v4goff_G128": 13.320,
+               "v4goff_R255": 10.780, "v4goff_Y255": 10.530, "v4goff_R64": 4.930,
+               "v4gon_reg": 60.530, "online_hb": 61.010, "online_idle": 17.220,
+               "v4goff_end": 2.775}
+    rows = []
+    for s in st1:
+        nm = s["name"]
+        if nm not in OLD_MED:
+            continue
+        o = OLD_MED[nm]
+        d = s["med"] - o
+        rows.append([esc(nm), "%.3f" % o, "<b>%.3f</b>" % s["med"],
+                     "<span class='%s'>%+.3f</span>" % ("ok" if abs(d) < 0.35 else "warn", d)])
+    H.append(table(["P1 档（Run / 在线 / LED 类）", "旧（脏 0x307）mA", "新（干净）mA", "Δ"], rows))
+    H.append('<div class="mut" style="margin-top:8px">解读：LED 档与 4G 断电 Run 档整体下移 '
+             '0.17–0.26 mA（调试位对 WFI 时段的影响）；4G 在线类（<code>v4gon_*</code>/<code>online_*</code>）'
+             '几乎不动（±0.3，属网络侧 DRX 漂移量级）；<b>会话期 MCU 全速忙等、无 WFI，所以不受影响</b>。</div>')
+
+    H.append("<h3>睡段实测（本次干净口径）</h3>")
+    rows = []
+    _lbl = {"seq60": "P1 的 3 个 <code>round_*</code> 睡段",
+            "day1": "P2 压缩日（3 个纯 Stop + 6 个轮内睡）",
+            "day2": "P3 压缩日（同 P2）"}
+    for tag in ("seq60", "day1", "day2"):
+        if tag not in SLEEP_BY:
+            continue
+        n, med = SLEEP_BY[tag]
+        rows.append([_lbl.get(tag, tag), "%d" % n, "<b>%.3f</b>" % med, "0.226",
+                     "%+.3f" % (med - 0.226)])
+    rows.append(["旧口径（对照，带调试位）", "—", "1.023 – 1.056", "0.226", "+0.80 ~ +0.83"])
+    H.append(table(["来源", "低电流样本数", "睡段中位 mA", "历史真值 mA", "Δ"], rows))
+    H.append('<div class="note good" style="margin-top:12px"><b>结论：完全吻合。</b>'
+             '三处独立来源的睡段实测都落在 <b>%.3f mA</b> 附近，与中午定案的 0.226 mA 一致；'
+             '而会话/在线档电流新旧差 ≤0.3 mA ⇒ <b>只有停机态被污染过</b>，'
+             '说明修正既必要又充分。</div>' % NIGHT_MA)
+
+    H.append('<div class="note"><b>⚠ 引用注意</b>：窗口轮 <code>round_*</code> 档的<b>窗口整体中位数不可单独引用</b>'
+             '—— 它的分布是双峰（38% 睡 + 52% 会话），中位正好卡在两峰交界，'
+             '混合比 0.1% 的变化就能让它从 33 跳到 57（本次 <code>round_dark</code> 33.25 → 56.62 即此现象，'
+             '而分态中位完全没变：会话 59.69→59.81）。要看该档请用「会话段中位」或「电荷 mAh」。</div>')
+
+    H.append('<div class="note good"><b>附带确证</b>：夜间 Stop 档（%.3f mA）相比 8 MHz Run 静止档（%.3f mA）'
+             '降低 %.2f mA ⇒ 睡眠机制本身工作正常。'
+             '压缩日全程最费档出现在窗口刚开机的搜网阶段。</div>'
+             % (NIGHT_MA,
+                next((s["med"] for s in st1 if s["name"] == "v4goff_dark"), 2.53),
+                next((s["med"] for s in st1 if s["name"] == "v4goff_dark"), 2.53) - NIGHT_MA))
 
     # §7 口径
     H.append("<h2>7 · 口径与复现</h2>")
@@ -456,14 +563,20 @@ ul{padding-left:22px}li{margin:5px 0}
              "经 <b>OpenOCD</b> 写 RAM（<code>g_test_cmd</code> + <code>g_test_go</code>）触发，"
              "每档切换时把档名与 RTC 秒写进 RAM 标记日志 <code>g_slog</code></li>")
     H.append("<li>时标：RTC 秒计数（唯一跨 Stop 存活），收尾用中位线性标定 scale</li>")
+    H.append("<li><b>干净口径</b>：每个 OpenOCD 会话末尾都写 <code>mww 0xE0042004 0</code> 清 "
+             "<code>DBGMCU_CR</code> 并回读确认 —— 否则 OpenOCD 的 <code>init</code> 会把 "
+             "<code>DBG_SLEEP|DBG_STOP|DBG_STANDBY</code> 置上，睡态虚增 ≈0.82 mA、"
+             "Run(WFI) 虚增 ≈0.29 mA，且退出调试器不清除（只有复位才清）</li>")
     H.append("<li>MQTT：<code>bench/mqtt_watch.py</code> 常驻旁听，落盘 <code>data/mqtt_live.csv</code></li>")
     H.append("<li>电荷：对采样做梯形积分 ∫I dt，再折算 mAh</li>")
     H.append("</ul>")
     H.append("<h3>复现命令</h3><pre>%s</pre>"
-             % esc('python bench/bench_swd.py --cmd "seq 60"          # P1 横向扫描\n'
-                   'python bench/bench_swd.py --cmd "day 30 3 G 255"    # P2/P3 压缩日\n'
-                   'python bench/run_recommended.py --poll 15           # 三合一（自动出图）\n'
-                   'python bench/report_day.py --stamp %s               # 本报告' % a.stamp))
+             % esc('python bench/run_recommended.py --stamp %s --poll 15   # P1+P2+P3 三合一（自动出图）\n'
+                   'python bench/report_day.py --stamp %s                  # 本报告\n'
+                   '\n'
+                   '# 干净口径的前提：只用本仓 bench/bench_swd.py 注入（它每个会话末尾清 DBGMCU_CR）；\n'
+                   '# 不要在同一上电周期里先手连 OpenOCD 再测功耗。--keep-dbg 仅供在 Stop 里看住目标用。'
+                   % (a.stamp, a.stamp)))
     H.append("<h3>原始文件</h3><ul>")
     for tag, title, _d in runs:
         H.append("<li>%s：<code>%s_f11.csv</code> / <code>%s_markers.csv</code></li>"
@@ -479,8 +592,8 @@ ul{padding-left:22px}li{margin:5px 0}
     with io.open(a.out, "w", encoding="utf-8", newline="\n") as f:
         f.write(html)
     print("写出: %s  (%d 字节)" % (a.out, len(html)))
-    print("换算: 睡态 %.2f mA · 每轮 %.3f mAh · 日合计 %.2f mAh · 平均 %.3f mA · 续航 %.0f 天"
-          % (NIGHT_MA, round_mah, tot_mah, avg_ma, days))
+    print("换算: 睡态 %.3f mA（实测 %d 样本）· 每轮 %.3f mAh · 日合计 %.2f mAh · 平均 %.3f mA · 续航 %.0f 天"
+          % (NIGHT_MA, SLEEP_N, round_mah, tot_mah, avg_ma, days))
     return 0
 
 

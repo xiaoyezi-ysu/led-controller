@@ -186,8 +186,10 @@ static int json_int(const char *json, const char *key, int def, int lo, int hi)
    等 ACK 发完 → +++ 进指令模式 → config,get,nettime 授时（~1.5s，无应答跳过）
    → AT+ENTM 回透传 → 挂 RTC 闹钟 → 关 4G → 进睡眠标志（主循环下一个 WFI 即 Stop）
    sleep_s: RTC 闹钟秒数（常规 lp_cycle = g_lp_period_s）
-   led_off: 1 = 收尾灭灯（常规）；0 = 保持点灯（工况测试的「窗口轮」最坏组合档） */
-static void LP_CloseAndSleepEx(uint32_t sleep_s, uint8_t led_off)
+   led_off: 1 = 收尾灭灯（常规）；0 = 保持点灯（工况测试的「窗口轮」最坏组合档）
+   返回：1 = 已进入睡眠态（闹钟可靠武装）；0 = 中止（RTC 未就绪/回读校验失败），
+         调用方**必须**放弃进 Stop，否则睡下无人唤醒 = 变砖。 */
+static uint8_t LP_CloseAndSleepEx(uint32_t sleep_s, uint8_t led_off)
 {
   /* 等 ACK 队列发完（最多 1.5s）。注意此时主循环被本函数阻塞，
      ACK 必须就地发送，不能指望主循环——否则 ACK 永远发不出去。 */
@@ -221,13 +223,17 @@ static void LP_CloseAndSleepEx(uint32_t sleep_s, uint8_t led_off)
   HAL_UART_Transmit(&UART_4G, (uint8_t *)"AT+ENTM\r\n", 9, 200);
   HAL_Delay(300);
 
-  /* 挂闹钟（对表之后，闹钟基于最新计数） */
+  /* 挂闹钟（对表之后，闹钟基于最新计数）。返回 0 才代表唤醒源可靠武装：
+     ArmIn 内部会回读 ALR 校验（写失败/被覆盖 = 睡死）。 */
   if (RTC_APP_ArmIn(sleep_s) != 0)
   {
-    printf("LP: RTC NOT ready -> abort cycle, stay online\r\n");
+    printf("LP: RTC alarm NOT armed -> abort cycle, stay online\r\n");
     g_lp_cycle = 0;
     s_lp_state = 0;
-    return;
+    g_low_power = 0;
+    HAL_ResumeTick();
+    V4G_Set(1);
+    return 0;
   }
   printf("LP: alarm armed +%us, entering Stop (4G cut)\r\n", (unsigned)sleep_s);
 
@@ -239,12 +245,13 @@ static void LP_CloseAndSleepEx(uint32_t sleep_s, uint8_t led_off)
   g_low_power = 1;
   DTU_SetLowPower(1);
   s_lp_state = 3;
+  return 1;
 }
 
-/* lp_cycle 常规收尾：睡 g_lp_period_s 秒、灭灯 */
-static void LP_CloseAndSleep(void)
+/* lp_cycle 常规收尾：睡 g_lp_period_s 秒、灭灯。返回同 LP_CloseAndSleepEx */
+static uint8_t LP_CloseAndSleep(void)
 {
-  LP_CloseAndSleepEx(g_lp_period_s, 1);
+  return LP_CloseAndSleepEx(g_lp_period_s, 1);
 }
 
 /* ===== 工况测试引擎（bench test）=========================================
@@ -337,6 +344,17 @@ volatile uint8_t pc_cmd_ready = 0;
    与 PC 串口通道互不干扰：两条路径都只是喂给同一个 SEQ_HandleCmd()。 */
 volatile char    g_test_cmd[48] __attribute__((aligned(4)));
 volatile uint8_t g_test_go      __attribute__((aligned(4)));
+
+/* 复位原因遥测：开机读 RCC_CSR（IWDGRSTF/WWDGRSTF/SFTRSTF/PINRSTF/LPWRRSTF）
+   + RTC 软看门狗的 BKP_DR1 标记。SWD 可读，也随 MQTT report 上报。 */
+volatile uint32_t g_rst_csr __attribute__((aligned(4))) = 0;
+volatile uint8_t  g_rst_wdg __attribute__((aligned(4))) = 0;
+
+/* 4G 模组健康时间戳：RX ISR 每收到一个字节就刷新。
+   dtu.c 用它判"模组死透"（MODULE_SILENT_MS 内零字节）→ 硬拉电恢复。
+   旧版只看 ssta 轮询超时，模组真死时无人应答也会被当成"没连上"而假 READY。 */
+volatile uint32_t g_4g_last_rx_ms __attribute__((aligned(4))) = 0;
+volatile uint32_t g_4g_rx_bytes   __attribute__((aligned(4))) = 0;
 
 #define SEQ_LOG_N 24
 typedef struct {
@@ -549,6 +567,7 @@ static void SEQ_HandleCmd(const char *line)
     printf("  !seq [dwell_s]                        13 档工况表，常规档默认 60s\r\n");
     printf("  !day [idle_s] [rounds] [R|Y|G] [bright]  压缩日\r\n");
     printf("  !stop                                 中止测试，回常在线\r\n");
+    printf("  !wdg [status|hang|hang_irq|on|off|T]  软看门狗状态/故障注入/配置\r\n");
     printf("  !help                                 本帮助\r\n");
     printf("  例: !seq 60   !day 30 3 G 255\r\n");
     return;
@@ -561,6 +580,61 @@ static void SEQ_HandleCmd(const char *line)
     V4G_Set(1);
     LED_AllOff();
     printf("SEQ: aborted -> stay online\r\n");
+    return;
+  }
+
+  if (strncmp(line, "wdg", 3) == 0)
+  {
+    const char *p = line + 3;
+    while (*p == ' ') p++;
+
+    if (*p == '\0' || strncmp(p, "status", 6) == 0)
+    {
+      printf("WDG: %s T=%us kick=%u miss=%u | rst CSR=0x%08X wdg=%u\r\n",
+             RTC_APP_WDG_On() ? "ON" : "OFF",
+             (unsigned)RTC_APP_WDG_Period(),
+             g_wdg_kick, g_wdg_miss, g_rst_csr, g_rst_wdg);
+    }
+    else if (strncmp(p, "hang", 4) == 0)
+    {
+      /* 故障注入①：主循环挂死（中断仍在）。心跳闹钟连续无人认领，
+         预期 ≤2T=60s 内 BKP 打标记 + 复位，F-11 应看到电流回到上电指纹。 */
+      printf("WDG: INJECT hang (main loop) -> expect reset in <=%us\r\n",
+             (unsigned)(RTC_APP_WDG_Period() * 2u));
+      HAL_Delay(50);
+      for (;;) { }
+    }
+    else if (strncmp(p, "hang_irq", 8) == 0)
+    {
+      /* 故障注入②：关中断挂死。软看门狗无法自救（无硬件狗兜底）——
+         预期永远不复位（电流恒定），验证已知边界。需断电恢复。 */
+      printf("WDG: INJECT hang with irq OFF -> NO self-heal (known limit)\r\n");
+      HAL_Delay(50);
+      __disable_irq();
+      for (;;) { }
+    }
+    else if (strncmp(p, "off", 3) == 0)
+    {
+      RTC_APP_WDG_Set(0, 0);
+      printf("WDG: OFF (until next reset)\r\n");
+    }
+    else if (strncmp(p, "on", 2) == 0)
+    {
+      RTC_APP_WDG_Set(1, 0);
+      printf("WDG: ON T=%us\r\n", (unsigned)RTC_APP_WDG_Period());
+    }
+    else if (*p >= '0' && *p <= '9')
+    {
+      uint32_t t = (uint32_t)atoi(p);
+      if (t < 5u) t = 5u;
+      if (t > 3600u) t = 3600u;
+      RTC_APP_WDG_Set(1, t);
+      printf("WDG: ON T=%us maxmiss=1\r\n", (unsigned)RTC_APP_WDG_Period());
+    }
+    else
+    {
+      printf("WDG usage: !wdg [status|hang|hang_irq|on|off|<T_seconds>]\r\n");
+    }
     return;
   }
 
@@ -654,6 +728,31 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
+  /* ---- 最先起来：RTC + 软看门狗 -----------------------------------------
+     顺序很重要：LSE/RTC 初始化（最多 5s 起振等待）后立刻武装看门狗，
+     这样后面**所有**初始化代码（SC7 软 I2C、LED、DTU、4G 配置）卡死
+     都能被自愈复位。旧版把 WDG_Start 放在 DTU_Init 之后，启动阶段卡死
+     （实测症状：断电重上电后整板卡在 ~2.5mA 不上来）无人兜底。 */
+  RTC_APP_Init();
+
+  /* 复位原因：CSR 各 *RSTF 位保持到下次 RMVF 清除，开机读出即上次复位源 */
+  g_rst_csr = RCC->CSR;
+  g_rst_wdg = RTC_APP_WasWdgReset();
+  printf("RTC: %s (cnt=%u)\r\n", RTC_APP_Ready() ? "ready" : "UNAVAILABLE",
+         RTC_APP_GetEpoch());
+  printf("RST: CSR=0x%08X%s%s%s%s%s\r\n", g_rst_csr,
+         (g_rst_csr & RCC_CSR_IWDGRSTF) ? " IWDG" : "",
+         (g_rst_csr & RCC_CSR_WWDGRSTF) ? " WWDG" : "",
+         (g_rst_csr & RCC_CSR_SFTRSTF)  ? " SW"   : "",
+         (g_rst_csr & RCC_CSR_LPWRRSTF) ? " LPWR" : "",
+         g_rst_wdg ? "  <-- RTC-SOFT-WDG RESET (self-healed)" : "");
+
+  RTC_APP_WDG_Start(30u);
+  printf("WDG: %s T=%us maxmiss=1 (hang -> reset in <=%us)\r\n",
+         RTC_APP_WDG_On() ? "ON" : "OFF (RTC unavailable)",
+         (unsigned)RTC_APP_WDG_Period(),
+         (unsigned)(RTC_APP_WDG_Period() * 2u));
+
   /* SC7A20H 姿态传感器（软 I2C: PB6=SCL, PB7=SDA）。
      硬件 I2C1 版(hi2c1) 与 MX_I2C1_Init 保留未用 —— 实测软 I2C 更省心：
      不占外设、引脚任意、失败也能逐拍观察。 */
@@ -677,11 +776,6 @@ int main(void)
 
   DTU_Init();
 
-  /* RTC（LSE + 闹钟唤醒 Stop 的定时器）。LSE 起振最多 5s，失败不影响其它功能。 */
-  RTC_APP_Init();
-  printf("RTC: %s (cnt=%u)\r\n", RTC_APP_Ready() ? "ready" : "UNAVAILABLE",
-         RTC_APP_GetEpoch());
-
   /* USER CODE END 2 */
 
   /* Infinite loop — SysTick wakes every 1ms, WFI sleeps otherwise */
@@ -694,7 +788,18 @@ int main(void)
     /* lp_cycle 睡眠态 = 真 Stop（SLEEPDEEP=1，仅 RTC 闹钟 EXTI17 能唤醒）；
        其余（含旧 sleep 模式）= Sleep（内核停、外设时钟在，UART RX 可唤醒，
        模组维持 MQTT —— 这个语义依赖 UART 唤醒，绝不能进 Stop）。 */
-    uint8_t lp_stop = (g_lp_cycle && s_lp_state == 3) || s_seq_stop;
+    uint8_t want_stop = (g_lp_cycle && s_lp_state == 3) || s_seq_stop;
+    /* ⚠ Stop 门禁（2026-10-14 加固）：没有已武装的唤醒源就绝不下睡 ——
+       F1 进 Stop 后唯一唤醒通道是 RTC 闹钟（EXTI17），闹钟没装上就睡下去
+       = 永久变砖。这里把"想睡"和"能睡"分开判，异常时退回常在线自愈。 */
+    uint8_t lp_stop = want_stop && (RTC_APP_WakeArmed() != 0);
+    if (want_stop && !lp_stop)
+    {
+      printf("STOP: REFUSED - no wake source armed -> abort to online\r\n");
+      g_lp_cycle = 0; s_lp_state = 0;
+      s_seq_stop = 0; s_seq_wait = 0; s_seq_run = 0;
+      g_low_power = 0; HAL_ResumeTick(); V4G_Set(1);
+    }
     if (g_low_power) HAL_SuspendTick(); else HAL_ResumeTick();
     if (lp_stop) SCB->SCR |=  SCB_SCR_SLEEPDEEP_Msk;
     else         SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
@@ -782,7 +887,10 @@ int main(void)
     }
 
     if (!lp_sleeping)
+    {
       DTU_Process(now);
+      RTC_APP_WDG_Poll(now);   /* 软看门狗喂狗：清醒期 ≥1s 节流重装心跳闹钟 */
+    }
 
     /* 延时 ACK：到点后把排队的 ACK 发给 4G 模组（尾带 \r\n，模组按行打包上报） */
     if (g_ack_pending && (int32_t)(now - g_ack_at) >= 0)
@@ -813,9 +921,17 @@ int main(void)
       else if (s_seq_round == 2)     /* LP_ROUND：收尾 → Stop */
       {
         s_seq_round = 0;
-        LP_CloseAndSleepEx(s_seq_sleep ? s_seq_sleep : 60u, 0);
-        s_seq_stop = 1;
-        s_seq_wait = 1;
+        /* ⚠ 收尾失败（闹钟没装上）时必须放弃本轮 Stop，绝不能置 s_seq_stop */
+        if (LP_CloseAndSleepEx(s_seq_sleep ? s_seq_sleep : 60u, 0))
+        {
+          s_seq_stop = 1;
+          s_seq_wait = 1;
+        }
+        else
+        {
+          printf("SEQ: LP_ROUND close aborted -> stop sequence\r\n");
+          s_seq_run = 0; s_seq_stop = 0; s_seq_wait = 0;
+        }
       }
       else if (!s_seq_wait &&
                (HAL_GetTick() - s_seq_t0) >= (uint32_t)s_seq_dwell * 1000u)
@@ -852,8 +968,10 @@ int main(void)
         char rep[128];
         int n = snprintf(rep, sizeof(rep),
                  "{\"cmd\":\"report\",\"wake\":\"rtc\",\"roll\":%d,\"pitch\":%d,"
-                 "\"sc7_ok\":%u,\"sc7_err\":%u,\"rtc\":%u}\r\n",
-                 g_sc7_roll, g_sc7_pitch, g_sc7_ok, g_sc7_err, RTC_APP_GetEpoch());
+                 "\"sc7_ok\":%u,\"sc7_err\":%u,\"rtc\":%u,"
+                 "\"csr\":%u,\"rst_wdg\":%u}\r\n",
+                 g_sc7_roll, g_sc7_pitch, g_sc7_ok, g_sc7_err, RTC_APP_GetEpoch(),
+                 g_rst_csr, g_rst_wdg);
         HAL_UART_Transmit(&UART_4G, (uint8_t*)rep, (uint16_t)n, 200);
         s_lp_reported = 1;
         printf("LP: report published (%d bytes)\r\n", n);
@@ -903,6 +1021,8 @@ int main(void)
                        (strstr((char*)json_buf, "\"cmd\":\"lp_cycle\"") != NULL) ||
                        (strstr((char*)json_buf, "\"cmd\": \"lp_cycle\"") != NULL) ||
                        (strstr((char*)json_buf, "\"cmd\":\"lp_cycle_off\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\":\"v4g\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\": \"v4g\"") != NULL) ||
                        (strstr((char*)json_buf, "\"cmd\":\"time\"") != NULL) ||
                        (strstr((char*)json_buf, "\"cmd\": \"time\"") != NULL);
       uint8_t match = 1;
@@ -1415,6 +1535,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     if (RX_BYTE_4G == '}')
       json_ready = 1;
     json_last_rx = HAL_GetTick();
+    g_4g_last_rx_ms = HAL_GetTick();   /* 模组健康时间戳（dtu.c 硬恢复判据） */
+    g_4g_rx_bytes++;
 
     DTU_RxByte(RX_BYTE_4G);
     HAL_UART_Receive_IT(&UART_4G, &RX_BYTE_4G, 1);
