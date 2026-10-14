@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>银尔达 4G DTU（Air780EPM / YED_DTU4）资料 × 本程序配置对照</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; background:#f4f6f9; color:#24292f;
+         line-height:1.75; padding:32px 16px; }
+  .wrap { max-width:960px; margin:0 auto; }
+  h1 { font-size:26px; margin-bottom:4px; }
+  .sub { color:#57606a; font-size:14px; margin-bottom:20px; }
+  h2 { font-size:20px; margin:34px 0 12px; padding-left:10px; border-left:4px solid #0969da; }
+  h3 { font-size:16px; margin:20px 0 8px; }
+  .card { background:#fff; border:1px solid #d8dee4; border-radius:10px; padding:18px 22px; margin-bottom:16px; }
+  table { border-collapse:collapse; width:100%; margin:10px 0; background:#fff; font-size:14px; }
+  th,td { border:1px solid #d8dee4; padding:7px 10px; text-align:left; vertical-align:top; }
+  th { background:#eef1f5; white-space:nowrap; }
+  code { font-family:Consolas,Menlo,monospace; background:#eff1f3; border-radius:4px; padding:1px 6px; font-size:13px; word-break:break-all; }
+  .cmd { display:block; background:#0d1117; color:#c9d1d9; padding:10px 14px; border-radius:8px;
+         font-family:Consolas,monospace; font-size:13px; margin:8px 0; overflow-x:auto; white-space:pre; }
+  .ok { color:#1a7f37; font-weight:600; }
+  .warn { color:#9a6700; font-weight:600; }
+  .bad { color:#cf222e; font-weight:600; }
+  a { color:#0969da; text-decoration:none; word-break:break-all; }
+  a:hover { text-decoration:underline; }
+  .tag { display:inline-block; background:#ddf4ff; color:#0969da; border-radius:12px; padding:1px 10px; font-size:12px; margin-right:6px; }
+  .note { background:#fff8c5; border:1px solid #d4a72c66; border-radius:8px; padding:10px 14px; margin:10px 0; font-size:14px; }
+  .foot { color:#8b949e; font-size:12px; text-align:center; margin-top:30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>银尔达 4G DTU 资料整理 × 本程序配置对照</h1>
+<div class="sub">模组：<b>YED_DTU4 透传固件 / Air780EPM 方案（合宙 Cat1）</b> · 对照代码 <code>Core/Src/dtu.c</code>（MODULE_YINERDA 驱动） · 2026-10-15 整理</div>
+
+<h2>〇、官方资料入口（先看这里）</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:170px">资料</th><th>地址</th><th>说明</th></tr>
+    <tr><td><b>银尔达官网</b></td><td><a href="http://www.yinerda.com">www.yinerda.com</a></td><td>产品页 / 硬件规格 / 购买</td></tr>
+    <tr><td><b>DTU 文档中心（语雀）</b></td><td><a href="https://yinerda.yuque.com/yt1fh6/4gdtu">yinerda.yuque.com/yt1fh6/4gdtu</a></td><td><b>4G DTU 手册总目录</b>，配置指令权威出处</td></tr>
+    <tr><td>透传固件更新日志</td><td><a href="https://yinerda.yuque.com/yt1fh6/4gdtu/vfo805a24dfptz7s">…/4gdtu/vfo805a24dfptz7s</a></td><td>YED_DTU4 各版本变化（本机为 YED_DTU4 系列）</td></tr>
+    <tr><td>WEB 参数说明</td><td><a href="https://yinerda.yuque.com/yt1fh6/4gdtu/gsccog81mv0hpii7">…/4gdtu/gsccog81mv0hpii7</a></td><td>每个 config 参数的含义（与 <code>config,set</code> 同源）</td></tr>
+    <tr><td>配置实例</td><td><a href="https://yinerda.yuque.com/yt1fh6/4gdtu/wr3hgtr9gav7muvs">…/4gdtu/wr3hgtr9gav7muvs</a></td><td>MQTT/TCP 配置完整示例</td></tr>
+    <tr><td>PC 配置工具</td><td><a href="https://yinerda.yuque.com/yt1fh6/4gdtu/fevo6571hagervvq">…/4gdtu/fevo6571hagervvq</a></td><td>4GDtuCfg.exe（串口读写参数，默认 115200）</td></tr>
+    <tr><td>合宙官方文档</td><td><a href="https://docs.openluat.com">docs.openluat.com</a></td><td>Air780EPM 底层 / 二次开发</td></tr>
+  </table>
+  <div class="note">⚠️ 二次开发烧录需谨慎：非银尔达固件刷入后<b>授权数据丢失必须返厂</b>（见更新日志页说明）。</div>
+</div>
+
+<h2>一、本机模组身份</h2>
+<div class="card">
+  <table>
+    <tr><th>项</th><th>值</th><th>怎么来的</th></tr>
+    <tr><td>固件</td><td>银尔达 DTU 透传固件 <code>YED_DTU4</code></td><td>指令集为 <code>config,set/get,...</code></td></tr>
+    <tr><td>方案</td><td>合宙 Air780EPM（Cat1 全网通）</td><td>产品线资料</td></tr>
+    <tr><td>设备 ID</td><td>ICCID <code>898608961026C0241530</code>（失败回退 IMEI）</td><td><code>config,get,iccid</code> / <code>config,get,imei</code></td></tr>
+    <tr><td>串口</td><td>USART 与 STM32 直连，115200 8N1</td><td>board_config.h</td></tr>
+    <tr><td>供电控制</td><td>PA3（GPIOA_ODR bit3）控制 V4G 模组电，断电 3 s 硬自愈</td><td><code>dtu_hard_recover()</code></td></tr>
+  </table>
+</div>
+
+<h2>二、上电初始化配置序列（dtu.c 状态机逐步对应）</h2>
+<div class="card">
+  <p>固件每次上电（含硬自愈后）按状态机 <code>PARAMSRC → QUERY_ICCID → SEND_MQTT → SEND_LED → SEND_NTP → SEND_LP → SEND_SAVE → WAIT_BOOT → READY</code> 重走一遍（<code>DTU_FORCE_RECONFIG=1</code> 强制重配）：</p>
+  <table>
+    <tr><th>#</th><th>指令</th><th>作用</th><th>代码</th></tr>
+    <tr><td>1</td><td><code>config,set,paramsrc,1</code></td><td>参数来源设为串口配置</td><td><code>_4G_PARAMSRC</code></td></tr>
+    <tr><td>2</td><td><code>config,get,iccid</code></td><td>取 ICCID 作设备 ID；失败回退 <code>config,get,imei</code></td><td><code>_4G_QUERY_ICCID</code></td></tr>
+    <tr><td>3</td><td><code>config,set,mqtt,1,uart,120,…</code>（24 字段长指令，见下）</td><td>配 MQTT 通道 1 并持久化</td><td><code>_4G_SEND_MQTT</code></td></tr>
+    <tr><td>4</td><td><code>config,set,led,2</code></td><td>关闭模组自身指示灯（省电 + 防光干扰）</td><td><code>_4G_SEND_LED</code>，宏 <code>DTU_LED_OFF_MODE=2</code></td></tr>
+    <tr><td>5</td><td><code>config,set,ntptime,1</code></td><td>NTP 对时开关（每 1 h 同步一次）</td><td>宏 <code>DTU_NTP_HOUR=1</code></td></tr>
+    <tr><td>6</td><td><code>config,set,lp,0</code> → <code>config,get,lp</code> 回读上报</td><td>模组低功耗开关；<b>实测 lp 无效，定 0（常在线满频）</b></td><td>宏 <code>DTU_LP_VALUE=0</code></td></tr>
+    <tr><td>7</td><td><code>config,set,save</code></td><td>保存进 Flash，模组自动重启 → 进透传</td><td><code>_4G_SEND_SAVE</code></td></tr>
+  </table>
+
+  <h3>核心：MQTT 长指令（字段一个都不能错位）</h3>
+  <span class="cmd">config,set,mqtt,1,uart,120,broker.emqx.io,1883,&lt;ICCID&gt;,,,1,0,0,0,0,&lt;下行sub&gt;,&lt;上行pub&gt;,0,0,0,0,0,0,0,0,0</span>
+  <table>
+    <tr><th>字段段</th><th>值</th><th>含义</th></tr>
+    <tr><td><code>mqtt,1</code></td><td>1</td><td>配置网络通道 1</td></tr>
+    <tr><td><code>uart,120</code></td><td>120 s</td><td><span class="ok">★ 通道心跳包周期</span> —— <b>这才是真正的保活</b>（官方最小 60 s）。实测靠它，模组在线待机 59 → 14.6 mA</td></tr>
+    <tr><td>服务器</td><td><code>broker.emqx.io:1883</code></td><td>公共 broker，user/pwd 空</td></tr>
+    <tr><td>clientid</td><td>ICCID</td><td>每台设备唯一</td></tr>
+    <tr><td><code>,,,1,0,0,0,0</code></td><td>proto=1(MQTT 3.1.1)、clean=0、retain=0、subq=0、pubq=0</td><td><span class="bad">★ 大坑</span>：user/pwd 为空必须用「,,」占位，<code>,,1</code> 只有俩逗号会把 1 落到 pwd ⇒ 字段整体错位、订阅变发布、<b>下行永远到不了 MCU</b>。必须 <code>,,,1</code>（netchaninfo 回读实证）</td></tr>
+    <tr><td>sub / pub</td><td><code>xiaoyeziUESTC1147/&lt;ICCID&gt;</code> / <code>DTU_Topic1147/&lt;ICCID&gt;</code></td><td>宏 <code>MQTT_TOPIC_PREFIX</code>（board_config.h）</td></tr>
+    <tr><td>尾段 <code>,0×9</code></td><td>will×5 + reg×2 + ipv6 + ssl</td><td>全部关闭</td></tr>
+  </table>
+</div>
+
+<h2>三、运行期指令（探活 / 自愈 / 授时）</h2>
+<div class="card">
+  <table>
+    <tr><th>动作</th><th>指令 / 时序</th><th>对应实现</th></tr>
+    <tr><td>退出透传</td><td><code>+++</code>（<b>裸发送、无 CRLF、发前静默 ≥1 s、发后等 1 s</b>）</td><td><code>dtu_send_raw("+++")</code>，<code>ESC_GUARD_MS=1000</code></td></tr>
+    <tr><td>查链路状态</td><td><code>config,get,ssta</code>（ssta=4 = MQTT 在线）</td><td>阻塞式探活 <code>dtu_probe_blocking()</code>，60 s 周期（<code>PROBE_PERIOD_MS</code>）</td></tr>
+    <tr><td>回透传</td><td><code>AT+ENTM</code>（需网络在线；链路断时无害）</td><td>探活收尾固定发</td></tr>
+    <tr><td>MCU→服务器心跳</td><td>每 15 s 一条 <code>{"cmd":"ready",…}</code></td><td><code>HB_PERIOD_MS=15000</code>（低功耗时停发，靠通道心跳 120 s 兜底，省 75% 待机电流）</td></tr>
+    <tr><td>软重启</td><td>探活连败 2 次 → <code>config,set,save</code>（模组重走配置）</td><td>POLL_SSTA / RECOVER 分支</td></tr>
+    <tr><td>硬自愈</td><td>软重启 3 次仍败 / <b>100 s 无像样应答</b>（<code>MODULE_SILENT_MS</code>）→ PA3 断电 3 s → 上电重走初始化 → 再败退避 5 min</td><td><code>dtu_hard_recover()</code>，健康判据只认 <b>可解析应答行</b>（<code>g_dtu_valid_rx_ms</code>，TX 悬空噪声不算）</td></tr>
+    <tr><td>授时</td><td><span class="warn">不用 <code>config,get,nettime</code></span>（会卡死命令通道几十秒）；改由服务器下发 <code>{"cmd":"time","epoch":…}</code> 写 RTC</td><td>main.c time 指令 + lp_cycle 收尾自动授时，RTC 误差 ≤2 s</td></tr>
+    <tr><td>噪声忽略</td><td>上行里 <code>+++</code> / <code>AT+ENTM</code> 回显是探活透传噪声</td><td>网页端 / <code>mqtt_watch.py</code> 已过滤</td></tr>
+  </table>
+</div>
+
+<h2>四、实测定案（踩坑记录）</h2>
+<div class="card">
+  <table>
+    <tr><th>结论</th><th>细节</th></tr>
+    <tr><td><span class="bad">lp 指令保不了连接</span></td><td>官方手册 #20：<code>config,set,lp,1</code> 只写「进入低功耗」，<b>没有「保持连接」档</b>；「超低功耗休眠」（8~465 µA）不连服务器。本模组 lp,1/lp,0 待机电流无差别 ⇒ 定 <code>lp,0</code>。想省电只能 <b>lp_cycle 整机 Stop（0.22 mA）+ 醒来重连</b></td></tr>
+    <tr><td><span class="ok">保活靠通道心跳</span></td><td><code>uart,120</code> 那个 120 s 心跳。停掉 MCU 的 15 s 心跳 + 60 s 探活后，模组在线 59 → 14.6 mA（−75%），连接不掉</td></tr>
+    <tr><td><span class="bad">nettime 系列在透传模式不回</span></td><td><code>config,get,nettime</code> / <code>ntptime</code> 查询被吞；且 nettime 异步取时会卡死命令通道 ⇒ 弃用，授时走服务器下发</td></tr>
+    <tr><td>MQTT 字段错位坑</td><td><code>,,1,0,…</code> 让 1 落到 pwd ⇒ 主题整体错位、下发丢失。空 user/pwd 必须 <code>,,,1</code></td></tr>
+    <tr><td>探活必须阻塞式</td><td>旧异步状态机会吃 DTU 1~4 s 迟到应答 ⇒ 误判离线 ⇒ <code>save</code> 重启死循环；改阻塞后（+++ 1.3 s → ssta 1.5 s → ENTM 1 s，重试 1 次）稳定</td></tr>
+    <tr><td>与整机低功耗的关系</td><td>lp_cycle 入睡前 V4G 断电（模组完全下线），醒来重新上电重走第二节配置序列 ⇒ 模组「低功耗」不靠 DTU 的 lp，靠整机 Stop</td></tr>
+  </table>
+</div>
+
+<h2>五、速查：本程序用到的全部 config 指令</h2>
+<div class="card">
+<span class="cmd">config,set,paramsrc,1
+config,get,iccid          # 失败 -> config,get,imei
+config,set,mqtt,1,uart,120,broker.emqx.io,1883,&lt;ICCID&gt;,,,1,0,0,0,0,xiaoyeziUESTC1147/&lt;ICCID&gt;,DTU_Topic1147/&lt;ICCID&gt;,0,0,0,0,0,0,0,0,0
+config,set,led,2          # 模组指示灯关
+config,set,ntptime,1      # NTP 每小时同步
+config,set,lp,0           # 实测 lp 无效，定 0
+config,get,lp             # 回读上报回执
+config,set,save           # 保存并重启 -> 自动进透传
+config,get,ssta           # 探活（=4 在线）
+config,get,netstatus,1 / config,get,mqtt,1 / config,get,netchaninfo,1   # 调试用回读
++++                       # 裸发、无 CRLF，退出透传
+AT+ENTM                   # 回透传
+config,get,nettime        # 弃用（卡命令通道）</span>
+</div>
+
+<div class="foot">车牌光伏项目 · docs/yinerda-dtu-config.html · 纯 CSS/SVG 零 CDN · 数据均来自实测与 dtu.c 源码</div>
+</div>
+</body>
+</html>
