@@ -295,6 +295,7 @@
       <tr><td><a href="rtc-commute-window-schedule.html">rtc-commute-window-schedule</a></td><td>通勤窗口调度方案设计（按上下班时间安排上报窗口），固件尚未实现，仅方案。</td></tr>
       <tr><td><a href="4g-lp-keepalive.html">4g-lp-keepalive</a></td><td>4G 模组低功耗定案：lp 模式不可用，「保持连接」与「超低功耗」互斥，保活靠 120 s 通道心跳。</td></tr>
       <tr><td><a href="coldboot-test.html">coldboot-test</a></td><td>冷启动可靠性测试：硬断电×8 次全 PASS，上电→4G 特征恒 3.4–3.5 s；昨夜 PA3=0 定性为偶发单次事件（遗留项已划掉）。</td></tr>
+      <tr><td><a href="lpcycle-autocycle-test.html">lpcycle-autocycle-test</a></td><td>lp_cycle 自主唤醒循环实测：period_min=2 跑满 4 睡 3 醒零复位，睡段 0.215 mA；顺带揪出并修掉「第 2 轮必被看门狗误咬」的真 bug，附各档 period 续航账。</td></tr>
       <tr><td><a href="index.html">index</a></td><td>docs 全部报告的目录页。</td></tr>
     </table>
   </div>

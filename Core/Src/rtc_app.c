@@ -220,12 +220,21 @@ void RTC_APP_WDG_Set(uint8_t on, uint32_t period_s)
 uint8_t  RTC_APP_WDG_On(void)      { return s_wdg_en; }
 uint32_t RTC_APP_WDG_Period(void)  { return s_wdg_period; }
 
-/* 主循环清醒期喂狗：≥1s 节流，重装 +T 心跳（ArmIn 内部 bump token） */
+/* 主循环清醒期喂狗：≥1s 节流，重装 +T 心跳（ArmIn 内部 bump token）。
+ *
+ * ★ 2026-10-14 修复（lp_cycle 长睡眠第 2 轮必被误咬）：
+ *   清醒期本函数每秒把闹钟往后推 ⇒ 清醒期闹钟**永不触发** ⇒ ISR 永远走不到
+ *   "认领清零"分支 ⇒ g_wdg_miss 只会被睡眠唤醒那发闹钟累加、永不归零，
+ *   于是 miss 退化成"累计睡眠轮数"：第 1 轮 0→1 擦边过关，第 2 轮 1→2 立刻咬
+ *   （实测 period_min=2 时复位恰好发生在第 2 次睡前 +120s 的唤醒瞬间）。
+ *   修法：主流程每次喂狗即视为"认领"——直接清零 miss。睡眠期本函数不跑，
+ *   miss 只由 ISR 累加，所以"连续两发无人认领"的语义仍然成立。 */
 void RTC_APP_WDG_Poll(uint32_t now_ms)
 {
   if (!s_wdg_en || !s_rtc_ok) return;
   if ((now_ms - s_wdg_last_ms) < 1000u) return;
   s_wdg_last_ms = now_ms;
+  g_wdg_miss = 0;                    /* ★ 主流程活着 → 认领：清 miss */
   RTC_APP_ArmIn(s_wdg_period);
 }
 
@@ -248,10 +257,11 @@ void RTC_APP_AlarmIRQ(void)
 
     if (s_wdg_en)
     {
-      /* token 还停在装这发闹钟的时刻 ⇒ 这段时间主流程零推进 ⇒ 挂死。
-         注意：正常睡眠唤醒的那发闹钟也会命中本分支（睡前 ArmIn 记的
-         arm_kick 就是当前 token）⇒ 记 1 次 miss，随后主循环一踢狗即清零；
-         MAX_MISS=1 下只有"连续两发都没人认领"才会真复位（≤2T=60s）。 */
+      /* token 还停在装这发闹钟的时刻 ⇒ 这段时间主流程零推进（零副作用：
+         清醒期闹钟被 Poll 无限推迟，能触发就说明主流程停了）。
+         正常睡眠唤醒那发也命中本分支 ⇒ 记 1 次 miss，**唤醒后主循环第一次
+         WDG_Poll 即把它清零**（见该函数注释）；MAX_MISS=1 下只有"挂死后
+         连续两发都没人认领"才会真复位（≤2T=60s）。 */
       if (g_wdg_kick == g_wdg_arm_kick)
       {
         g_wdg_miss++;

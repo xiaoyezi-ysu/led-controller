@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>lp_cycle 自主唤醒循环验证 — 4 睡 3 醒 零复位</title>
+<style>
+.backbtn{position:fixed;top:12px;right:14px;z-index:999;background:#2563eb;color:#fff;
+padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;
+box-shadow:0 2px 8px rgba(0,0,0,.22)}.backbtn:hover{opacity:.85}
+:root{--bg:#f8fafc;--card:#fff;--line:#e2e8f0;--tx:#1e293b;--mut:#64748b;--good:#059669;--bad:#b91c1c;--blue:#2563eb;--amber:#d97706}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7}
+.wrap{max-width:880px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:21px;margin:6px 0 2px}
+h2{font-size:17px;margin:30px 0 10px;border-left:4px solid var(--blue);padding-left:10px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin-bottom:14px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+th{background:#f1f5f9}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.pass{color:var(--good);font-weight:bold}
+.kpi{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
+.kpi>div{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+.kpi .lab{color:var(--mut);font-size:12.5px}
+.kpi .val{font-size:22px;font-weight:700;margin-top:2px}
+.note{border-radius:10px;padding:12px 16px;font-size:13.5px;margin:10px 0;border:1px solid}
+.note.good{background:#ecfdf5;border-color:#a7f3d0}
+.note.bad{background:#fef2f2;border-color:#fecaca}
+.note.warn{background:#fffbeb;border-color:#fde68a}
+.note.mut{background:#f8fafc;border-color:var(--line)}
+code{background:#f1f5f9;border-radius:4px;padding:1px 6px;font-size:12.5px}
+.mut{color:var(--mut)}
+svg{display:block;width:100%;height:auto}
+</style>
+</head>
+<body>
+<a class="backbtn" href="final-summary.html" title="返回最终总结">&#8592; 返回总结</a>
+<div class="wrap">
+  <h1>lp_cycle 自主唤醒循环验证 —— 睡 2 min → 自主醒来 → 跑 92 s → 再睡</h1>
+  <div class="sub">2026-10-14 19:34–19:49 · F-11 电流 + SWD 状态轮询 + MQTT 旁听三路同采 · 固件 <code>commit 47c2c70 + WDG-Poll 修复</code> · 数据 <code>bench/data/lpcyc_20261014_193426_*</code> · 脚本 <code>bench/lpcycle_cycle_test.py</code></div>
+
+  <div class="kpi">
+    <div><div class="lab">结果</div><div class="val pass">4 睡 3 醒</div></div>
+    <div><div class="lab">实测睡段（Stop）</div><div class="val">0.215 mA</div></div>
+    <div><div class="lab">睡段时长（目标 120 s）</div><div class="val">119.5–122.9 s</div></div>
+    <div><div class="lab">看门狗复位</div><div class="val pass">0 次</div></div>
+  </div>
+
+  <h2>一、结论</h2>
+  <div class="note good"><b>「Stop 后能自主醒来，循环成立」——用 2 分钟睡眠实测 3 个完整循环，零人工干预。</b><br>
+  下发 <code>{"cmd":"lp_cycle","period_min":2}</code> 后，板子自己走完了
+  <b>睡 120 s → 醒（4G 会话 92 s，上报 + 授时）→ 再睡 120 s</b> 的节律，全程
+  看门狗 <code>rst_wdg=0</code>（一次都没被误咬）、每次唤醒都发出
+  <code>{"cmd":"report","wake":"rtc"}</code>（MQTT 实测收到 4 次）。</div>
+  <div class="note mut">观察窗 772 s（12.9 min）内共 <b>4 个睡段、3 个完整会话</b>——第 4 个睡段是采集到点停止时板子正在睡，
+  不是失败。SWD 轮询 48 次里 29 次「失联」，那是睡态的<b>正常现象</b>：
+  Stop 里 APB 外设整片断电，SWD 读不到 RAM，反而是「真睡下去了」的证据。</div>
+
+  <h2>二、电流时间轴（F-11 真值）</h2>
+  <div class="card">
+    <svg viewBox="0 0 680 190" role="img" aria-label="lp_cycle 循环电流时间轴">
+      <!-- 轴 -->
+      <line x1="40" y1="150" x2="660" y2="150" stroke="#cbd5e1" stroke-width="1"/>
+      <text x="40"  y="168" font-size="11" fill="#64748b">0 s</text>
+      <text x="330" y="168" font-size="11" fill="#64748b" text-anchor="middle">386 s</text>
+      <text x="652" y="168" font-size="11" fill="#64748b" text-anchor="end">772 s</text>
+
+      <!-- 状态带：按 t -> x(t)=40+(t/772)*620 -->
+      <!-- 起始在线 3.5~10.3 -->
+      <rect x="42.8" y="74" width="5.5" height="34" fill="#f59e0b"/>
+      <!-- SLEEP1 13.7~133.2 -->
+      <rect x="51.0" y="74" width="96.0" height="34" fill="#cbd5e1" stroke="#94a3b8"/>
+      <text x="99" y="96" font-size="12" fill="#334155" text-anchor="middle">睡 119.5 s · 0.216 mA</text>
+      <!-- AWAKE1 133.2~225.4 -->
+      <rect x="147.0" y="74" width="74.1" height="34" fill="#f59e0b"/>
+      <text x="184" y="96" font-size="12" fill="#7c2d12" text-anchor="middle">会话 92.2 s</text>
+      <!-- SLEEP2 -->
+      <rect x="221.0" y="74" width="98.7" height="34" fill="#cbd5e1" stroke="#94a3b8"/>
+      <text x="270" y="96" font-size="12" fill="#334155" text-anchor="middle">睡 122.9 s · 0.215 mA</text>
+      <!-- AWAKE2 -->
+      <rect x="319.7" y="74" width="74.1" height="34" fill="#f59e0b"/>
+      <text x="357" y="96" font-size="12" fill="#7c2d12" text-anchor="middle">会话 92.3 s</text>
+      <!-- SLEEP3 -->
+      <rect x="393.8" y="74" width="98.6" height="34" fill="#cbd5e1" stroke="#94a3b8"/>
+      <text x="443" y="96" font-size="12" fill="#334155" text-anchor="middle">睡 122.8 s · 0.213 mA</text>
+      <!-- AWAKE3 -->
+      <rect x="492.4" y="74" width="74.1" height="34" fill="#f59e0b"/>
+      <text x="529" y="96" font-size="12" fill="#7c2d12" text-anchor="middle">会话 92.3 s</text>
+      <!-- SLEEP4 (未完) -->
+      <rect x="566.5" y="74" width="93.2" height="34" fill="#e2e8f0" stroke="#94a3b8" stroke-dasharray="4 3"/>
+      <text x="613" y="96" font-size="12" fill="#475569" text-anchor="middle">睡 116.1 s…</text>
+
+      <!-- 唤醒箭头 -->
+      <g stroke="#059669" stroke-width="1.6" fill="#059669">
+        <path d="M147,118 L147,60 L141,66 M147,60 L153,66"/>
+        <path d="M319.7,118 L319.7,60 L313.7,66 M319.7,60 L325.7,66"/>
+        <path d="M492.4,118 L492.4,60 L486.4,66 M492.4,60 L498.4,66"/>
+      </g>
+      <text x="147" y="52" font-size="11" fill="#059669" text-anchor="middle">RTC 自主唤醒</text>
+      <text x="406" y="52" font-size="11" fill="#059669" text-anchor="middle">RTC 自主唤醒</text>
+
+      <!-- 无复位标注 -->
+      <line x1="40" y1="136" x2="660" y2="136" stroke="#059669" stroke-width="4" stroke-linecap="round" opacity=".55"/>
+      <text x="350" y="131" font-size="12" fill="#047857" text-anchor="middle">全程 g_rst_wdg = 0 · 看门狗一次都没咬（红线=复位，本图无）</text>
+      <text x="350" y="32" font-size="12" fill="#334155" text-anchor="middle">灰 = Stop 睡态（0.215 mA）  橙 = 4G 会话（59 mA）  t 轴 = 采集时间</text>
+    </svg>
+    <div class="mut" style="font-size:12.5px;margin-top:6px">完整带标注曲线见 <a href="lpcycle-autocycle-annotated.html">lpcycle-autocycle-annotated</a>（含 MQTT 上下行叠加）。</div>
+  </div>
+
+  <h2>三、逐段实测</h2>
+  <div class="card">
+    <table>
+      <tr><th>段</th><th class="num">起 (s)</th><th class="num">时长 (s)</th><th class="num">中位电流 (mA)</th><th>判定</th></tr>
+      <tr><td>SLEEP #1</td><td class="num">13.7</td><td class="num">119.5</td><td class="num">0.216</td><td class="pass">✓ 目标 120 s</td></tr>
+      <tr><td>AWAKE #1（会话）</td><td class="num">133.2</td><td class="num">92.2</td><td class="num">59.425</td><td class="pass">✓ 自主醒来</td></tr>
+      <tr><td>SLEEP #2</td><td class="num">225.4</td><td class="num">122.9</td><td class="num">0.215</td><td class="pass">✓</td></tr>
+      <tr><td>AWAKE #2（会话）</td><td class="num">348.3</td><td class="num">92.3</td><td class="num">59.140</td><td class="pass">✓ 自主醒来</td></tr>
+      <tr><td>SLEEP #3</td><td class="num">440.5</td><td class="num">122.8</td><td class="num">0.213</td><td class="pass">✓</td></tr>
+      <tr><td>AWAKE #3（会话）</td><td class="num">563.4</td><td class="num">92.3</td><td class="num">59.250</td><td class="pass">✓ 自主醒来</td></tr>
+      <tr><td>SLEEP #4（采集结束时仍在睡）</td><td class="num">655.6</td><td class="num">116.1</td><td class="num">0.215</td><td class="mut">— 未观察完整段</td></tr>
+    </table>
+    <div class="mut" style="font-size:12.5px;margin-top:8px">
+      SWD 侧同步印证：会话期读到 <code>s_lp_state=session</code>、<code>g_lp_cycle=1</code>，收尾瞬间读到 <code>closing</code>，
+      睡态整体读不到（APB 断电）；<code>g_wdg_kick</code> 在会话期持续增长（62→298），说明主循环与喂狗都在跑。</div>
+  </div>
+
+  <h2>四、过程中揪出并修掉一个真 bug：第 2 轮必被看门狗咬</h2>
+  <div class="note bad"><b>第一轮实测（修复前）：前两轮正常，第 3 轮翻车。</b>
+  睡 → 醒 → 睡 都正常，但<b>第 2 次睡眠被唤醒的那一瞬间被软看门狗复位</b>
+  （实测复位时刻 = 睡前 +120 s，SWD 读到 <code>rst_wdg=1</code>、<code>g_lp_cycle</code> 被清 0），
+  复位后回到常在线模式，电流一直停在 59 mA 不再循环。</div>
+
+  <div class="card">
+    <h3 style="font-size:14.5px;margin:0 0 8px">根因：清醒期没人认领，miss 退化成「累计睡眠轮数」</h3>
+    <ul style="font-size:13.5px;margin:6px 0 6px 18px;padding:0">
+      <li>清醒期主循环每秒调 <code>WDG_Poll</code> 重装心跳闹钟 ⇒ <b>闹钟被无限往后推 ⇒ 清醒期 ISR 永远不触发</b>；</li>
+      <li>而 ISR 里唯一的「认领清零」分支只在闹钟触发时才执行 ⇒ <b>清醒期 miss 永远不会被清零</b>；</li>
+      <li>于是 <code>g_wdg_miss</code> 实际记的是「累计睡眠唤醒次数」：第 1 轮 0→1（≤阈值，擦边过关），第 2 轮 1→2（&gt;阈值）→ 复位。</li>
+    </ul>
+    <table>
+      <tr><th>时刻</th><th>kick vs arm_kick</th><th class="num">miss</th><th>结果</th></tr>
+      <tr><td>SLEEP #1 唤醒</td><td>相等（睡眠期零推进）</td><td class="num">0 → 1</td><td>≤ 阈值，放过</td></tr>
+      <tr><td>AWAKE #1 全程</td><td>—（闹钟被 Poll 推迟，ISR 不触发）</td><td class="num">停在 1</td><td class="mut">无人清零</td></tr>
+      <tr><td>SLEEP #2 唤醒</td><td>相等</td><td class="num">1 → 2</td><td style="color:#b91c1c">超过阈值 → 复位</td></tr>
+    </table>
+    <div class="note good" style="margin-top:12px"><b>修法（一行）：</b>主流程每次喂狗即视为「认领」——
+    <code>RTC_APP_WDG_Poll()</code> 里加 <code>g_wdg_miss = 0;</code>。
+    睡眠期该函数不跑，miss 仍只由 ISR 累加，所以「连续两发无人认领 = 挂死」的语义不变；
+    而「主流程在跑」这一事实终于能把残留的 miss 清掉。</div>
+    <table style="margin-top:10px">
+      <tr><th>场景</th><th>修复前</th><th>修复后</th></tr>
+      <tr><td>正常在线（常喂狗）</td><td>miss 停在 1</td><td class="pass">miss 恒 0</td></tr>
+      <tr><td>睡眠 ≤ 阈值轮数</td><td>第 1 轮放过、第 2 轮必咬</td><td class="pass">每轮唤醒后即清零，永不复位</td></tr>
+      <tr><td>主循环挂死</td><td>≤60 s 复位</td><td class="pass">≤60 s 复位（语义保持）</td></tr>
+    </table>
+  </div>
+
+  <h2>五、⚠ 这个周期太短，别再这么配</h2>
+  <div class="note warn"><b>period_min=2 只是用来验证「会不会自己醒来」的测试档，不能上车用。</b>
+  每 3.5 分钟就烧一次 92 s 的 4G 会话（60 mA），整机日均会被拉到 ~26 mA，
+  1000 mAh 电池只够 <b>约 1.6 天</b>。</div>
+  <div class="card">
+    <table>
+      <tr><th>睡眠 period</th><th class="num">完整周期</th><th class="num">稳态日均电流</th><th class="num">1000 mAh 续航</th></tr>
+      <tr><td>2 min（本次验证档）</td><td class="num">212 s</td><td class="num">25.9 mA</td><td class="num">≈1.6 天</td></tr>
+      <tr><td>5 min</td><td class="num">392 s</td><td class="num">14.1 mA</td><td class="num">≈3.0 天</td></tr>
+      <tr><td>30 min</td><td class="num">31.5 min</td><td class="num">3.09 mA</td><td class="num">≈13.5 天</td></tr>
+      <tr><td>60 min</td><td class="num">61.5 min</td><td class="num">1.69 mA</td><td class="num">≈24.7 天</td></tr>
+      <tr><td>120 min</td><td class="num">121.5 min</td><td class="num">0.96 mA</td><td class="num">≈43.3 天</td></tr>
+    </table>
+    <div class="mut" style="font-size:12.5px;margin-top:8px">
+      按实测口径算：睡 0.215 mA / 会话 92.3 s @59.2 mA（会话电荷 5464 mA·s = 1.52 mAh），
+      <code>I=(period×60×0.215 + 5464)/(period×60 + 92.3)</code>。含首个「先收尾再睡」的平均略低。</div>
+  </div>
+
+  <h2>六、复现方式</h2>
+  <div class="card">
+    <code>python bench/lpcycle_cycle_test.py --period 2 --cycles 3</code>
+    <div class="mut" style="font-size:12.5px;margin-top:8px">
+      脚本自动完成：MQTT 下发 <code>lp_cycle</code> → F-11 连续采电流 → SWD 每 15 s 读
+      <code>s_lp_state / g_lp_cycle / g_wdg_kick / g_wdg_miss / g_rst_wdg</code> → MQTT 旁听 →
+      按电流阈值自动切「睡/醒」段 → 出图 + 结论。<br>
+      注：<code>s_lp_state</code> 等是 <code>uint8_t</code> 且地址常非 4 字节对齐，
+      必须按对齐字 + 字节偏移取值（脚本已处理，早期版本直接 mdw 会读到相邻变量打包成的乱码）。</div>
+  </div>
+</div>
+</body>
+</html>
