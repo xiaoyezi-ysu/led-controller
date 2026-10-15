@@ -22,6 +22,7 @@ volatile uint32_t g_wdg_miss = 0;      /* 软看门狗连续未认领闹钟数�
 static volatile uint32_t g_wdg_arm_kick = 0; /* 装当前这发闹钟时的 token 快照 */
 static uint8_t s_wake_armed = 0;             /* 1 = 已武装有效闹钟（可安全进 Stop） */
 static uint8_t s_rtc_ok = 0;
+static uint8_t s_irq_gate_ok = 0;            /* 1 = CRH.ALRIE + NVIC 闹钟线都在位 */
 
 #define RTC_EXTI_LINE   (1u << 17)
 
@@ -29,6 +30,21 @@ static void rtc_wait_rtoff(void)
 {
   uint32_t guard = 0;
   while (!(RTC->CRL & RTC_CRL_RTOFF))
+    if (++guard > 2000000u) break;   /* ≈250ms @8MHz，防呆 */
+}
+
+/* ★ 等 APB1 与 RTC 核心同步（RSF=1）。
+ *
+ * 背景（2026-10-15 定位的低压保护"睡下醒不来"根因）：
+ *   APB1 接口与 RTC 核心完全独立，内核复位/睡眠/Stop 期间 RTC 照走但 APB1 停摆。
+ *   从 Stop 唤醒后的前一段时间里 RSF=0，此时**读 RTC 值不可信、写 CRH/CRL 无效**。
+ *   实测：从 Stop 醒来主循环里重挂闹钟，RSF=0 ⇒ 写进 CRH 的 ALRIE 位被丢弃
+ *   ⇒ 下一轮闹钟不产生中断 ⇒ 板子永远醒不来（锁死在 Stop）。
+ *   修法：所有 CRH/CRL 写与 CNT/ALR 读之前先等 RSF=1。 */
+static void rtc_wait_rsf(void)
+{
+  uint32_t guard = 0;
+  while (!(RTC->CRL & RTC_CRL_RSF))
     if (++guard > 2000000u) break;   /* ≈250ms @8MHz，防呆 */
 }
 
@@ -76,11 +92,7 @@ void RTC_APP_Init(void)
 
     /* 3) 等 APB 与 RTC 内核同步（RSF），首次配置分频/清计数 */
     RTC->CRL &= (uint16_t)~RTC_CRL_RSF;
-    {
-      uint32_t guard = 0;
-      while (!(RTC->CRL & RTC_CRL_RSF))
-        if (++guard > 2000000u) break;
-    }
+    rtc_wait_rsf();
     rtc_enter_cfg();
     RTC->PRLL = 0x7FFFu; RTC->PRLH = 0;      /* 32768Hz -> 1Hz */
     RTC->CNTL = 0;       RTC->CNTH = 0;      /* 计数从 0 起 */
@@ -99,6 +111,23 @@ void RTC_APP_Init(void)
   /* 5) NVIC */
   NVIC_SetPriority(RTC_Alarm_IRQn, 2);
   NVIC_EnableIRQ(RTC_Alarm_IRQn);
+
+  /* 6) 闹钟中断使能（CRH 的 ALRIE，必须在 RSF=1 且 CNF=0 时写） */
+  rtc_wait_rsf();
+  RTC->CRH |= RTC_CRH_ALRIE;
+
+  /* 7) 回读自检：IRQ 门禁（CRH.ALRIE + NVIC ISER）任缺一 ⇒ 不许进 Stop。
+     ⚠ RTC_Alarm_IRQn=41 ⇒ 落在 NVIC->ISER[1] 的 bit(41-32)=bit9，别看 ISER[0]。 */
+  {
+    uint32_t iser1 = NVIC->ISER[1];
+    uint8_t crh_ok = (RTC->CRH & RTC_CRH_ALRIE) ? 1u : 0u;
+    uint8_t nvic_ok = (iser1 & (1u << ((uint32_t)RTC_Alarm_IRQn - 32u))) ? 1u : 0u;
+    printf("RTC: alarm IRQ gate CRH.ALRIE=%u NVIC.ISER1=0x%08lX(bit%u=%u) %s\r\n",
+           (unsigned)crh_ok, (unsigned long)iser1,
+           (unsigned)((uint32_t)RTC_Alarm_IRQn - 32u), (unsigned)nvic_ok,
+           (crh_ok && nvic_ok) ? "OK" : "*** INCOMPLETE ***");
+    s_irq_gate_ok = (uint8_t)(crh_ok && nvic_ok);
+  }
 }
 
 uint8_t RTC_APP_Ready(void) { return s_rtc_ok; }
@@ -125,15 +154,20 @@ uint8_t RTC_APP_ArmIn(uint32_t delay_s)
   if (!s_rtc_ok) return 1;
   if (delay_s < 2u) delay_s = 2u;      /* 下限保护：太短来不及休眠 */
 
+  /* ★ 2026-10-15 关键修复：CRH/CRL 的读写必须先等 RSF=1。
+     从 Stop 唤醒后 RSF=0，此时写 CRH（ALRIE）会被硬件丢弃 ⇒ 下一发闹钟
+     不产生中断 ⇒ 醒不来。这里把所有 CR 写操作都挪到"等同步"之后。 */
+  rtc_wait_rsf();
+
   RTC->CRL &= (uint16_t)~RTC_CRL_ALRF;      /* 清旧标志（rc_w0，CNF 外可写） */
+  RTC->CRH |= RTC_CRH_ALRIE;   /* ⚠ 必须在 CNF=0 时写（CRH 不进配置模式！） */
   g_rtc_alarm_hit = 0;
   EXTI->PR = RTC_EXTI_LINE;
 
   uint32_t al = RTC_APP_GetEpoch() + delay_s;
-  rtc_enter_cfg();
+  rtc_enter_cfg();                              /* 只有 ALR/CNT/PRL 需要 CNF=1 */
   RTC->ALRH = al >> 16;
   RTC->ALRL = al & 0xFFFFu;
-  RTC->CRH |= RTC_CRH_ALRIE;   /* F1 无 ALRE 位：闹钟比较器恒开，使能中断即可 */
   rtc_exit_cfg();
 
   /* ⚠ 回读校验（2026-10-14 加固）：ALR 写失败/被覆盖 = 睡下就永远醒不来。
@@ -148,6 +182,26 @@ uint8_t RTC_APP_ArmIn(uint32_t delay_s)
       return 2;
     }
   }
+
+  /* ⚠ 第二道保险（2026-10-15 新增）：ALRIE 与 NVIC 使能都要在位。
+     ALR 写对了但 ALRIE 丢了，同样永远醒不来。 */
+  if (!(RTC->CRH & RTC_CRH_ALRIE) || !(NVIC->ISER[1] &
+      (1u << ((uint32_t)RTC_Alarm_IRQn - 32u))))
+  {
+    printf("RTC: IRQ gate MISSING (CRH=0x%04X ISER1=0x%08lX) -> NOT armed\r\n",
+           (unsigned)RTC->CRH, (unsigned long)NVIC->ISER[1]);
+    /* 重试一次：再等同步、重写 CRH、重开 NVIC */
+    rtc_wait_rsf();
+    RTC->CRH |= RTC_CRH_ALRIE;
+    NVIC_SetPriority(RTC_Alarm_IRQn, 2);
+    NVIC_EnableIRQ(RTC_Alarm_IRQn);
+    EXTI->IMR |= RTC_EXTI_LINE;
+    if (!(RTC->CRH & RTC_CRH_ALRIE))
+    {
+      s_wake_armed = 0;
+      return 3;
+    }
+  }
   s_wake_armed = 1;
 
   /* 软看门狗 token：每次安排新闹钟（睡眠闹钟/心跳重装）都算"主流程推进了一步"。
@@ -160,7 +214,34 @@ uint8_t RTC_APP_ArmIn(uint32_t delay_s)
   return 0;
 }
 
-uint8_t RTC_APP_WakeArmed(void) { return (s_rtc_ok && s_wake_armed) ? 1u : 0u; }
+/* 是否已武装了有效闹钟（可安全进 Stop）。
+ * ★ 2026-10-15 加固：除 ALR 已写外，还必须满足 IRQ 门禁（CRH.ALRIE + NVIC）。
+ * 门禁缺失时返回 0 ⇒ 主循环拒绝进 Stop ⇒ 绝不锁死。 */
+uint8_t RTC_APP_WakeArmed(void)
+{
+  if (!s_rtc_ok || !s_wake_armed) return 0u;
+  rtc_wait_rsf();
+  if (!(RTC->CRH & RTC_CRH_ALRIE)) return 0u;
+  if (!(NVIC->ISER[1] & (1u << ((uint32_t)RTC_Alarm_IRQn - 32u)))) return 0u;
+  return 1u;
+}
+
+/** 从 Stop 唤醒后重开闹钟中断门禁：RSF 此时为 0，CRH/NVIC 都得重配一遍。
+ *  @return 0 = 门禁已就位；1 = 失败（调用方应放弃继续睡） */
+uint8_t RTC_APP_RearmIRQ(void)
+{
+  if (!s_rtc_ok) return 1u;
+  rtc_wait_rsf();
+  RTC->CRH |= RTC_CRH_ALRIE;
+  EXTI->IMR |= RTC_EXTI_LINE;
+  NVIC_SetPriority(RTC_Alarm_IRQn, 2);
+  NVIC_EnableIRQ(RTC_Alarm_IRQn);
+  s_irq_gate_ok = (uint8_t)((RTC->CRH & RTC_CRH_ALRIE) &&
+                  (NVIC->ISER[1] & (1u << ((uint32_t)RTC_Alarm_IRQn - 32u))));
+  return s_irq_gate_ok ? 0u : 1u;
+}
+
+uint8_t RTC_APP_IRQGateOK(void) { return s_irq_gate_ok; }
 
 /* ===========================================================================
  * RTC 软看门狗（方案A："闹钟心跳 + token 判活"，Stop 睡眠零代价）
@@ -183,16 +264,18 @@ static uint8_t   s_wdg_en     = 0;
 static uint32_t  s_wdg_period = 30u;
 static uint32_t  s_wdg_last_ms = 0;  /* Poll 节流 */
 
-/* 装闹钟但不动 token（供 ISR 心跳重装用，流程同 ArmIn） */
+/* 装闹钟但不动 token（供 ISR 心跳重装用，流程同 ArmIn）
+   ⚠ CRH/CRL 写前必须 RSF=1，且 CRH 只能在 CNF=0 时写（2026-10-15 修复）。 */
 static void wdg_arm_nobump(uint32_t delay_s)
 {
+  rtc_wait_rsf();
   RTC->CRL &= (uint16_t)~RTC_CRL_ALRF;
+  RTC->CRH |= RTC_CRH_ALRIE;        /* CNF=0 时写 */
   EXTI->PR = RTC_EXTI_LINE;
   uint32_t al = RTC_APP_GetEpoch() + delay_s;
   rtc_enter_cfg();
   RTC->ALRH = al >> 16;
   RTC->ALRL = al & 0xFFFFu;
-  RTC->CRH |= RTC_CRH_ALRIE;
   rtc_exit_cfg();
   g_wdg_arm_kick = g_wdg_kick;   /* 重装的心跳同样记录"装钟时刻的 token" */
 }
