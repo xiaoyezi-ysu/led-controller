@@ -229,11 +229,15 @@
         </div>
         <div style="font-size:12px;color:#888;margin-top:12px;line-height:1.7;">
             查询命令：<code>{"cmd":"adc"}</code>（别名 <code>bat</code>）<br>
-            回执：<code>{"cmd":"adc","status":"ok","mv":2724,"adc_mv":1873,"raw":2325}</code><br>
+            回执：<code>{"cmd":"adc","status":"ok","mv":4091,"adc_mv":2813,"raw":3321,"vdda":3475}</code><br>
             ▸ <code>mv</code> = 电池电压（已按 R7 100k / R8 220k 分压还原）；<br>
-            ▸ <code>adc_mv</code> = PA1 实测电压；<code>raw</code> = 12 位原始值。<br>
-            <span style="color:#f9a825;">▸ 采样支路平时断开（PA2 高，0 耗流）</span>，查询瞬间才接通
-            3 ms 并连采 8 次取中值，所以读数可以随时取、不增加待机功耗。<br>
+            ▸ <code>adc_mv</code> = PA1 分压点实际电压；<code>raw</code> = 12 位原始值；<br>
+            ▸ <code>vdda</code> = 本次采样的 ADC 基准（VREFINT 反算，±5%）。<br>
+            <span style="color:#f9a825;">▸ 采样支路平时断开（PA2 低，0 耗流）</span>，查询瞬间才接通
+            并等待 50 ms 稳定后连采 8 次取中值，所以读数可以随时取、不增加待机功耗。<br>
+            <span style="color:#f9a825;">▸ 基准是实时实测的</span>：本板电源为
+            光伏/锂电 → CN3142 → VBAT → LDO ME6206A33 → VCC33，调试期若把 VBAT
+            直短到 3V3 网络，基准会变成 ~4.2 V；固件用内部 VREFINT 反算，两种接法自动适配。<br>
             ▸ 读数偏低的常见原因：4G 发射瞬时脉冲拉低电池（内阻压降）；
             <b>连续监测取最小值</b>更接近真实下限。单节锂电 &lt;3.2 V 属低电量。
         </div>
@@ -651,9 +655,9 @@
             const det = document.getElementById('batDetail');
             if (!big) return;
             const v = a.mv / 1000;
-            // 分档着色：≥3.6V 绿 / 3.3~3.6 正常白 / 3.2~3.3 黄 / <3.2 红（低电量）
-            const color = v >= 3.6 ? '#4CAF50' : v >= 3.3 ? '#e0e0e0'
-                        : v >= 3.2 ? '#f9a825' : '#f44336';
+            // 单节锂电分档：≥4.0 满 / 3.7~4.0 良好 / 3.5~3.7 一般 / 3.3~3.5 偏低 / <3.3 低电量
+            const color = v >= 4.00 ? '#4CAF50' : v >= 3.70 ? '#8BC34A'
+                        : v >= 3.50 ? '#e0e0e0' : v >= 3.30 ? '#f9a825' : '#f44336';
             big.style.color = color;
             big.textContent = v.toFixed(3) + ' V';
             adcCnt++; adcMin = (adcMin === null || v < adcMin) ? v : adcMin;
@@ -663,7 +667,8 @@
                 extra = ' ｜ 本次监测 ' + adcCnt + ' 次  min ' + adcMin.toFixed(3)
                       + ' / max ' + adcMax.toFixed(3) + ' V';
             }
-            det.textContent = 'PA1 ' + a.adc_mv + ' mV · raw ' + a.raw + extra;
+            det.textContent = 'PA1 ' + a.adc_mv + ' mV · raw ' + a.raw
+                            + (a.vdda ? ' · 基准 ' + a.vdda + ' mV' : '') + extra;
         }
         function startAdcPoll() {
             if (adcPollTimer) return;
