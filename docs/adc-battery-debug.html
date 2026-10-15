@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>电池电压 ADC 调试全记录 · 车牌光伏</title>
+<style>
+  :root{--ink:#1e293b;--mut:#64748b;--line:#e2e8f0;--bg:#f8fafc;--card:#fff;--acc:#2563eb;--ok:#059669;--bad:#b91c1c;--warn:#b45309}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:var(--ink);background:var(--bg);line-height:1.7;padding:24px 16px}
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-size:22px}.sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+  h2{font-size:16px;margin:26px 0 10px;padding-left:10px;border-left:4px solid var(--acc)}
+  h3{font-size:14px;margin:16px 0 6px;color:#334155}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin-bottom:12px}
+  .kpis{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .kpi{flex:1;min-width:152px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+  .kpi .lab{font-size:11.5px;color:var(--mut)}
+  .kpi .val{font-size:20px;font-weight:700;color:var(--acc)}
+  .kpi .val small{font-size:12px;font-weight:400;color:var(--mut)}
+  .kpi.bad .val{color:var(--bad)}.kpi.ok .val{color:var(--ok)}
+  details{margin:8px 0;border:1px solid var(--line);border-radius:8px;background:#fbfdff}
+  summary{cursor:pointer;padding:8px 13px;font-size:13.5px;font-weight:600;color:var(--acc);user-select:none;list-style:none}
+  summary::before{content:"▸ ";font-size:12px}
+  details[open] summary::before{content:"▾ "}
+  details[open] summary{border-bottom:1px dashed var(--line)}
+  .dbody{padding:10px 13px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  .good{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
+  .bad{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
+  .warnbox{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.5px;font-family:Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:11px 14px;font-size:12px;overflow-x:auto;line-height:1.55;font-family:Consolas,monospace}
+  .mut{color:var(--mut);font-size:12.5px}
+  a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+  ol,ul{padding-left:20px;font-size:13.5px}li{margin:4px 0}
+  svg{max-width:100%;height:auto;display:block;margin:10px auto}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;font-weight:600}
+  .t-fix{background:#dcfce7;color:#166534}.t-open{background:#fee2e2;color:#991b1b}.t-tool{background:#dbeafe;color:#1e40af}
+  .mono{font-family:Consolas,monospace;font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>电池电压 ADC 查询 —— 调试全记录</h1>
+<div class="sub">车牌光伏 ver2 · 2026-10-15 · 命令 <code>{"cmd":"adc"}</code> 从「永远偏低 30%」到端到端精确 · 含万用表 66k 之谜与调试短接 V33 的影响</div>
+
+<div class="kpis">
+  <div class="kpi bad"><div class="lab">修复前读数</div><div class="val">1.85 <small>V</small></div><div class="mut">真值 2.72 V（节点）</div></div>
+  <div class="kpi ok"><div class="lab">修复后读数</div><div class="val">4.093 <small>V</small></div><div class="mut">电池电压，误差 &lt;3%</div></div>
+  <div class="kpi"><div class="lab">叠加缺陷数</div><div class="val">3 <small>个</small></div><div class="mut">基准 / 极性 / 时间常数</div></div>
+  <div class="kpi"><div class="lab">复测稳定性</div><div class="val">±5 <small>mV</small></div><div class="mut">20 次连续采样</div></div>
+</div>
+
+<h2>一、主流程图：一条 adc 指令的完整旅程</h2>
+<div class="card">
+<svg viewBox="0 0 840 660" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>ADC 查询指令的完整数据流与三个缺陷位置</title>
+<desc>从 MQTT 下发到电压上行的全链路，标出基准、极性、时间常数三个缺陷的所在环节。</desc>
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<rect x="20" y="14" width="800" height="632" rx="16" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+
+<text x="40" y="42" font-size="13" font-weight="700" fill="#0f172a">① 下发</text>
+<rect x="40" y="54" width="200" height="52" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+<text x="140" y="76" font-size="13" font-weight="600" fill="#1e3a8a" text-anchor="middle">网页 / 脚本</text>
+<text x="140" y="94" font-size="11.5" fill="#1e40af" text-anchor="middle" font-family="Consolas,monospace">{"cmd":"adc"}</text>
+
+<path d="M240 80 L318 80" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="318" y="54" width="200" height="52" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+<text x="418" y="76" font-size="13" font-weight="600" fill="#1e3a8a" text-anchor="middle">4G DTU 透传</text>
+<text x="418" y="94" font-size="11.5" fill="#1e40af" text-anchor="middle">MQTT 下行主题</text>
+
+<path d="M518 80 L596 80" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="596" y="54" width="200" height="52" rx="9" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+<text x="696" y="76" font-size="13" font-weight="600" fill="#155e75" text-anchor="middle">STM32 主循环</text>
+<text x="696" y="94" font-size="11.5" fill="#0e7490" text-anchor="middle">匹配 cmd=="adc"</text>
+
+<text x="40" y="148" font-size="13" font-weight="700" fill="#0f172a">② 采样时序（bat_adc_sample）</text>
+
+<rect x="40" y="162" width="168" height="60" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+<text x="124" y="184" font-size="13" font-weight="600" fill="#92400e" text-anchor="middle">PA2 = 1</text>
+<text x="124" y="202" font-size="11.5" fill="#b45309" text-anchor="middle">Q5→Q1 导通</text>
+<text x="124" y="215" font-size="11.5" fill="#b45309" text-anchor="middle">接通分压支路</text>
+
+<path d="M208 192 L254 192" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+<rect x="254" y="162" width="168" height="60" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+<text x="338" y="184" font-size="13" font-weight="600" fill="#92400e" text-anchor="middle">等 50 ms</text>
+<text x="338" y="202" font-size="11.5" fill="#b45309" text-anchor="middle">RC = 6.9 ms</text>
+<text x="338" y="215" font-size="11.5" fill="#b45309" text-anchor="middle">≈ 7.2 τ 充满</text>
+
+<path d="M422 192 L468 192" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+<rect x="468" y="162" width="168" height="60" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+<text x="552" y="184" font-size="13" font-weight="600" fill="#92400e" text-anchor="middle">采 8 次取中值</text>
+<text x="552" y="202" font-size="11.5" fill="#b45309" text-anchor="middle">239.5 周期采样</text>
+<text x="552" y="215" font-size="11.5" fill="#b45309" text-anchor="middle">(min+max)/2</text>
+
+<path d="M636 192 L682 192" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+<rect x="682" y="162" width="114" height="60" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+<text x="739" y="184" font-size="13" font-weight="600" fill="#92400e" text-anchor="middle">PA2 = 0</text>
+<text x="739" y="202" font-size="11.5" fill="#b45309" text-anchor="middle">断开支路</text>
+<text x="739" y="215" font-size="11.5" fill="#b45309" text-anchor="middle">恢复 0 耗流</text>
+
+<text x="40" y="258" font-size="13" font-weight="700" fill="#0f172a">③ 电压还原（两个乘数都要对）</text>
+
+<rect x="40" y="272" width="356" height="86" rx="9" fill="#e0e7ff" stroke="#6366f1" stroke-width="1"/>
+<text x="218" y="294" font-size="12.5" font-weight="600" fill="#312e81" text-anchor="middle">节点电压 = raw / 4095 × VDDA</text>
+<text x="218" y="315" font-size="12" fill="#4338ca" text-anchor="middle" font-family="Consolas,monospace">VDDA = 1.20V × 4095 / vrefint_raw</text>
+<text x="218" y="336" font-size="11.5" fill="#b45309" text-anchor="middle">⚠ 缺陷① 基准：VDDA 必须实测，不能假设 3.3V</text>
+
+<path d="M396 315 L442 315" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+<rect x="442" y="272" width="354" height="86" rx="9" fill="#e0e7ff" stroke="#6366f1" stroke-width="1"/>
+<text x="619" y="294" font-size="12.5" font-weight="600" fill="#312e81" text-anchor="middle">电池电压 = 节点 × 320 / 220</text>
+<text x="619" y="315" font-size="12" fill="#4338ca" text-anchor="middle" font-family="Consolas,monospace">= 节点 × 1.4545   （R7+R8）/ R8</text>
+<text x="619" y="336" font-size="11.5" fill="#b45309" text-anchor="middle">⚠ 缺陷② 极性 / ③ 时间常数 在上一环节</text>
+
+<text x="40" y="392" font-size="13" font-weight="700" fill="#0f172a">④ 回执</text>
+
+<rect x="40" y="406" width="756" height="62" rx="9" fill="#dcfce7" stroke="#22c55e" stroke-width="1"/>
+<text x="418" y="428" font-size="12.5" font-weight="600" fill="#166534" text-anchor="middle">上报（就地组包入队，字段多装不进通用 ACK 格式）</text>
+<text x="418" y="451" font-size="12" fill="#15803d" text-anchor="middle" font-family="Consolas,monospace">{"cmd":"adc","status":"ok","mv":4093,"adc_mv":2814,"raw":3315,"vdda":3477}</text>
+
+<text x="40" y="502" font-size="13" font-weight="700" fill="#0f172a">⑤ 硬件链（采样窗口内的实际通路）</text>
+
+<rect x="40" y="516" width="118" height="52" rx="9" fill="#fee2e2" stroke="#ef4444" stroke-width="1"/>
+<text x="99" y="538" font-size="12.5" font-weight="600" fill="#991b1b" text-anchor="middle">VBAT</text>
+<text x="99" y="555" font-size="11" fill="#b91c1c" text-anchor="middle">3.9~4.2 V</text>
+
+<path d="M158 542 L192 542" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+<rect x="192" y="516" width="118" height="52" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+<text x="251" y="538" font-size="12.5" font-weight="600" fill="#92400e" text-anchor="middle">PMOS-Q1</text>
+<text x="251" y="555" font-size="11" fill="#b45309" text-anchor="middle">AO3401A</text>
+
+<path d="M310 542 L344 542" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+<rect x="344" y="516" width="118" height="52" rx="9" fill="#e0e7ff" stroke="#6366f1" stroke-width="1"/>
+<text x="403" y="538" font-size="12.5" font-weight="600" fill="#312e81" text-anchor="middle">R7 100k</text>
+<text x="403" y="555" font-size="11" fill="#4338ca" text-anchor="middle">上分压</text>
+
+<path d="M462 542 L496 542" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+<rect x="496" y="516" width="130" height="52" rx="9" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+<text x="561" y="536" font-size="12.5" font-weight="600" fill="#155e75" text-anchor="middle">ADC_BAT</text>
+<text x="561" y="553" font-size="11" fill="#0e7490" text-anchor="middle" font-family="Consolas,monospace">PA1 · C14 100nF</text>
+
+<path d="M626 542 L660 542" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+<rect x="660" y="516" width="136" height="52" rx="9" fill="#e0e7ff" stroke="#6366f1" stroke-width="1"/>
+<text x="728" y="538" font-size="12.5" font-weight="600" fill="#312e81" text-anchor="middle">R8 220k</text>
+<text x="728" y="555" font-size="11" fill="#4338ca" text-anchor="middle">下分压 → GND</text>
+
+<text x="40" y="600" font-size="11.5" fill="#64748b">分压比 = (100k+220k)/220k = 1.4545 ｜ 节点源阻抗 = R7∥R8 ≈ 68.6 kΩ ｜ 与 C14 组成 RC ≈ 6.9 ms</text>
+<text x="40" y="620" font-size="11.5" fill="#64748b">★ VBAT → LDO ME6206A33XG → VCC33（= VDDA）。调试短接 V33 时该 LDO 被旁路跨过，VDDA 变 4.2 V。</text>
+</svg>
+</div>
+
+<h2>二、结论速览：三个缺陷叠加</h2>
+<div class="card">
+<table>
+<tr><th style="width:30px">#</th><th style="width:150px">缺陷</th><th style="width:78px">影响</th><th>机制</th><th style="width:66px">状态</th></tr>
+<tr>
+  <td>①</td>
+  <td><b>基准假设错</b><br><span class="mut">VDDA 硬编 3300 mV</span></td>
+  <td><span class="mono">−20%</span></td>
+  <td>调试期为给 4G 供电把 <b>VBAT 直短到 3V3 网络</b>，LDO 输出被旁路，VDDA 实为 4.17 V。固件却按 3.3 V 算 ⇒ 系统性偏低。<br><b>且 F1 上 VREFINT 随 VDDA 同变 ⇒ 纯分压的 raw 恒定，与电池电压无关</b>，不走 VREFINT 反算根本测不出绝对值。</td>
+  <td><span class="tag t-fix">已修</span></td>
+</tr>
+<tr>
+  <td>②</td>
+  <td><b>PA2 极性写反</b><br><span class="mut">BAT_EN 高低电平</span></td>
+  <td><span class="mono">−10%</span></td>
+  <td>原理图 <code>BAT_EN → R29 → NMOS-Q5 → PMOS-Q1</code>：<b>接通分压支路靠 PA2=1</b>。旧代码写 0 ⇒ 采样时支路其实是断的，读的是 C14 浮空残荷；而且平时 PA2=1 反把支路常通，白漏约 12 µA。</td>
+  <td><span class="tag t-fix">已修</span></td>
+</tr>
+<tr>
+  <td>③</td>
+  <td><b>等待时间不足</b><br><span class="mut">RC 常数算错</span></td>
+  <td><span class="mono">−5%</span></td>
+  <td>源阻抗 R7∥R8 ≈ 68.6 kΩ × C14 100 nF ⇒ <b>RC ≈ 6.9 ms</b>。旧注释误写成「6.9 µs」，等待只给 3 ms = 0.43τ，节点电压还在爬坡就采样了。</td>
+  <td><span class="tag t-fix">已修</span></td>
+</tr>
+</table>
+
+<div class="bad"><b>修复前</b>：读 1.85 V，万用表测节点真值 2.72 V ⇒ 偏低约 32%。三者相乘 <span class="mono">0.80 × 0.90 × 0.95 ≈ 0.68</span>，与实测比值 <span class="mono">1.85/2.72 = 0.68</span> 吻合。</div>
+<div class="good"><b>修复后</b>：<span class="mono">{"cmd":"adc","status":"ok","mv":4093,"adc_mv":2814,"raw":3315,"vdda":3477}</span><br>分压自校验 <span class="mono">4093 × 220/320 = 2814 mV</span> ✓ 与节点读数完全一致；20 次连采波动 ±5 mV。</div>
+</div>
+
+<h2>三、万用表 66k 之谜（为什么 R8 在板测不是 220k）</h2>
+<div class="card">
+<h3>现象</h3>
+<table>
+<tr><th>测量对象</th><th>万用表读数</th><th>标称值</th><th>评价</th></tr>
+<tr><td>R7 两端（VBAT ↔ ADC_BAT）</td><td class="mono">99.6 kΩ（稳定）</td><td class="mono">100 kΩ</td><td style="color:#059669">✓ 正常</td></tr>
+<tr><td>R8 两端（ADC_BAT ↔ GND）</td><td class="mono">65.4 kΩ（跳动）</td><td class="mono">220 kΩ</td><td style="color:#b91c1c">✗ 差 3 倍</td></tr>
+</table>
+<div class="mut">注：用户最初报的是 66k；后续用另一副表笔复测为 <b>65.4 kΩ</b>（还量到 99.6 k）、以及 <b>65.4 k / 99.6 k</b>，结论不变。</div>
+
+<h3>答案：欧姆档测的是「并联等效电阻」，不是元件本身</h3>
+<p style="font-size:13.5px">数字万用表的欧姆档会在表笔间输出一个测试电压。当你把表笔搭在 R8 两端（ADC_BAT ↔ GND）时，测试电流有<b>两条</b>路径可走：</p>
+<ol>
+  <li>直接穿过 R8 到地 —— 220 kΩ</li>
+  <li>向上穿过 R7、再经 VBAT 网络（PMOS-Q1 的体二极管 / 电池直插支路）回到地 —— 这形成与 R8 <b>并联</b>的另一条通路</li>
+</ol>
+<pre>R8 在板读数 ≈ R8 ∥ (R7 + VBAT 侧等效阻抗)
+           ≈ 220k ∥ 100k        ← VBAT 侧近似低阻（PMOS 体二极管 / 直接短接 V33）
+           = 68.75 kΩ
+实测 65.4 kΩ ≈ 68.75 kΩ（差值来自电阻公差 + 表笔接触电阻 + C14 充放电导致的读数抖动）</pre>
+
+<h3>为什么 R7 却测出来很准？</h3>
+<p style="font-size:13.5px">测 R7 时，测试电压加在 VBAT ↔ ADC_BAT 之间。ADC_BAT 往下是 R8 + C14 到地，R8 是 220 kΩ <b>远大于</b> R7 的 100 kΩ，所以并联影响很小，绝大部分压降落在 R7 上 ⇒ 读数接近真实 100 k。</p>
+
+<div class="warnbox"><b>结论</b>：R8 在板测出 65～66 kΩ 是<b>完全正常的测量假象</b>，器件没坏。要量真实值必须把电阻焊下来（或至少断开一端）。同理 <b>验证 R8 真实值的最佳手段是「电压法」</b>：见下方第四章的实测电压核对。</div>
+</div>
+
+<h2>四、调试短接 V33 的连锁影响</h2>
+<div class="card">
+<div class="warnbox">
+<b>调试动作</b>（用户说明）：「为了调试，VBAT 直接接到 3.3，因为不这样做的话不连接电池，4G 模组无法供电。」<br>
+⇒ 板上 <b>CN3142 充电 → VBAT → LDO ME6206A33XG → VCC33</b> 这条正常链路中，<b>LDO 的输出被 VBAT 旁路跨过</b>，VCC33 网络实际电压 = VBAT ≈ 4.0~4.2 V。
+</div>
+
+<h3>对 ADC 的两个后果</h3>
+<table>
+<tr><th style="width:180px">后果</th><th>说明</th></tr>
+<tr><td><b>基准被抬高</b></td><td>VDDA 从 3.3 V 变成 ≈4.17 V。ADC 满量程跟着变，但固件仍按 3.3 V 换算 ⇒ 读数偏低 ~20%。</td></tr>
+<tr><td><b>raw 值「恒定」</b><br><span class="mut">最反直觉的一点</span></td><td>因为 <b>VDDA = VBAT</b>，而 ADC 测量的是<b>同一个电压的分压</b>：<br><span class="mono">raw = 节点/VDDA × 4095 = (VBAT×0.6875)/VBAT × 4095 = 0.6875 × 4095 ≈ 2815</span><br>⇒ <b>无论电池是 3.8 V 还是 4.2 V，raw 都吐 2815</b>，测量结构对绝对电压完全免疫。</td></tr>
+</table>
+
+<div class="bad"><b>这也解释了早期「电池亏电 2.7 V」的误判</b>：当时 raw 稳定在 2294~2325（接近 0.6875×4095 的理论值，差值来自 PA2 极性反了导致的浮空残荷），被误读成「电池只有 2.7 V」。实际电池一直是满的。</div>
+
+<h3>各接法下的理论 raw（用于对照）</h3>
+<table>
+<tr><th>接法</th><th>VDDA</th><th>VBAT</th><th>节点电压</th><th>理论 raw</th><th>说明</th></tr>
+<tr><td><b>短接 V33</b>（调试）</td><td class="mono">≈VBAT</td><td class="mono">4.20 V</td><td class="mono">2.888 V</td><td class="mono">2815</td><td rowspan="2" style="color:#b45309">raw 与 VBAT 无关，恒为 2815</td></tr>
+<tr><td><b>短接 V33</b>（调试）</td><td class="mono">≈VBAT</td><td class="mono">3.80 V</td><td class="mono">2.612 V</td><td class="mono">2815</td></tr>
+<tr><td><b>LDO 正常</b></td><td class="mono">3.30 V</td><td class="mono">4.20 V</td><td class="mono">2.888 V</td><td class="mono">3583</td><td style="color:#059669">raw 随 VBAT 线性变化 ✓</td></tr>
+<tr><td><b>LDO 正常</b></td><td class="mono">3.30 V</td><td class="mono">3.80 V</td><td class="mono">2.612 V</td><td class="mono">3241</td><td style="color:#059669">可正常反映电量</td></tr>
+</table>
+
+<div class="good"><b>最终实测（LDO 恢复正常后）</b>：<code>vrefint_raw=1414</code> → <code>VDDA=3475 mV</code>；<code>raw=3315</code> → 节点 <code>2814 mV</code> → 电池 <code>4093 mV</code>。与上表「LDO 正常 / VBAT≈4.09 V」一致 ✓</div>
+</div>
+
+<h2>五、修复方案（固件）</h2>
+<div class="card">
+<h3>1. 基准改为实测（根治缺陷①）</h3>
+<pre>/* 读内部基准 VREFINT（ADC1_IN17，典型 1.20 V）反算 VDDA */
+static uint16_t adc_read_vdda(void) {
+  sConfig.Channel      = ADC_CHANNEL_VREFINT;
+  sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;   /* VREFINT 要求 ≥5 µs */
+  HAL_ADC_ConfigChannel(&amp;hadc1, &amp;sConfig);
+  ... 单次转换 ...
+  g_vdda_mv = (uint16_t)((1200u * 4095u) / raw);       /* 反算 */
+  /* 恢复 PA1 通道，别影响后续采样 */
+  sConfig.Channel = ADC_CHANNEL_1;
+  HAL_ADC_ConfigChannel(&amp;hadc1, &amp;sConfig);
+}</pre>
+<div class="mut">HAL 会在配置 VREFINT 通道时自动置 <code>ADC_CR2.TSVREFE</code>（<code>stm32f1xx_hal_adc.c:2064</code>），无需手动开。</div>
+
+<h3>2. 极性修正（根治缺陷②）</h3>
+<pre>GPIOA-&gt;BSRR = GPIO_PIN_2;    /* PA2 = 1 → Q5/Q1 导通，接通分压支路 */
+HAL_Delay(50);               /* ≈7.2τ 等 RC 充满 */
+... 连采 8 次 ...
+GPIOA-&gt;BRR  = GPIO_PIN_2;    /* PA2 = 0 → 关断，恢复 0 耗流 */</pre>
+
+<h3>3. 时间常数修正（根治缺陷③）</h3>
+<table>
+<tr><th>参数</th><th>修复前</th><th>修复后</th><th>依据</th></tr>
+<tr><td>采样前等待</td><td class="mono">3 ms (0.43τ)</td><td class="mono">50 ms (7.2τ)</td><td>节点还在爬坡 → 充分稳定</td></tr>
+<tr><td>ADC 采样时间</td><td class="mono">1.5 周期</td><td class="mono">239.5 周期</td><td>源阻抗 68.6 kΩ 高，采样电容需长充电</td></tr>
+<tr><td>合理性闸门</td><td class="mono">2500~3800 mV</td><td class="mono">2500~4600 mV</td><td>旧闸门把正确值 4171 当异常丢弃了</td></tr>
+</table>
+
+<h3>4. 附带修掉的致命 bug</h3>
+<div class="bad"><b><code>main()</code> 从未调用 <code>MX_ADC1_Init()</code></b>（CubeMX 生成后漏接）⇒ <code>hadc1.Instance == NULL</code> ⇒ 首次采样时 <code>HAL_ADC_Start → ADC_Enable()</code> 去写 <code>NULL-&gt;CR2</code>（地址 0x24）⇒ <b>IMPRECISERR 总线错误（CFSR=0x00000400）→ HardFault 整板死机</b>。<br>
+症状极具误导性：SWD 注入命令后 <code>g_test_go</code> 永不归零、<code>_4g_state</code> 停在残值 <code>0x0E</code>（看着像 READY，其实 CPU 早死了）。<br>
+<b>诊断路径</b>：<code>ICSR(0xE000ED04)</code> 低 9 位 = 异常号（3 = HardFault）→ <code>CFSR(0xE000ED28)</code> bit10 = IMPRECISERR → HardFault 栈帧取第 7 字 = 出错 PC → <code>arm-none-eabi-addr2line</code> 反查。<br>
+<b>修法</b>：main 里补 <code>MX_ADC1_Init();</code> + <code>bat_adc_sample()</code> 开头加空指针防御。</div>
+</div>
+
+<h2>六、测量方法与踩坑</h2>
+<div class="card">
+<details open>
+<summary>SWD 注入脚本：每次都要现场解析符号地址</summary>
+<div class="dbody">
+<div class="warnbox"><b>今天犯了两遍的坑</b>：新增全局变量 <code>g_vrefint_raw</code>/<code>g_vdda_mv</code> 后，符号地址漂移 —— <code>g_test_cmd</code> 从 <code>0x200007DC</code> → <code>0x200007E0</code>，<code>g_test_go</code> 从 <code>0x2000080C</code> → <code>0x20000810</code>。脚本沿用旧地址 ⇒ 命令写进无效内存 ⇒ 读回全 0，白跑一轮。</div>
+<pre>arm-none-eabi-nm -n firmware.elf | grep -E "g_test_cmd|g_test_go|g_bat_|g_vdda"</pre>
+<div class="mut">铁律：SWD 注入脚本每次运行前先 <code>nm</code> 解析，绝不写死地址。</div>
+</div>
+</details>
+
+<details>
+<summary>Flash 读保护（RDP）意外置位</summary>
+<div class="dbody">
+动线/异常之后出现过 <code>Error: stm32x device protected</code>，烧录被拒。恢复步骤：
+<ol>
+<li><code>openocd ... -c "init" -c "reset halt" -c "stm32f1x unlock 0"</code>（会提示「需复位生效」）</li>
+<li>USB 继电器硬断电脉冲（COM12）：<code>relay.cmd pulse --off-ms 3000</code></li>
+<li>重新烧录，<code>Verified OK</code></li>
+</ol>
+</div>
+</details>
+
+<details>
+<summary>万用表 vs ADC 的差异说明</summary>
+<div class="dbody">
+修复后 ADC 读节点 2814 mV，万用表早前测 R8 两端 2.7 V —— 差约 0.11 V，属正常：
+<ul>
+<li><b>VREFINT 标称分散 ±5%</b>（1.20 V ±5%），是当前主要的绝对精度来源</li>
+<li>万用表多为 10 MΩ 输入阻抗，会与 68.6 kΩ 源阻抗形成轻微分压</li>
+<li>两次测量时刻不同，VBAT 随光伏充电状态浮动</li>
+</ul>
+<div class="good">所以「准确度」应理解为 <b>±5% 量级</b>：足够判断电量档位（满 / 良好 / 偏低 / 低电），但不适合作为精密电压表。</div>
+</div>
+</details>
+
+<details>
+<summary>欧姆档在板测电阻的通则</summary>
+<div class="dbody">
+<ul>
+<li>板上任何电阻，只要两端还挂着<b>其他通路</b>，欧姆档读到的就是<b>并联等效值</b>，不是元件真值</li>
+<li>电容（如 C14）会让读数<b>持续跳动</b> —— 欧姆档的测试电压在给电容充放电</li>
+<li>要量真值：焊下元件，或断开一端；更省事的办法是<b>通电测电压</b>再用分压/欧姆定律反推</li>
+</div>
+</details>
+</div>
+
+<h2>七、验收数据</h2>
+<div class="card">
+<table>
+<tr><th>项目</th><th>结果</th></tr>
+<tr><td>命令 / 别名</td><td><code>{"cmd":"adc"}</code> · <code>{"cmd":"bat"}</code></td></tr>
+<tr><td>回执字段</td><td><code>mv</code>（电池 mV）· <code>adc_mv</code>（节点 mV）· <code>raw</code>（12 位）· <code>vdda</code>（实测基准 mV）</td></tr>
+<tr><td>端到端（MQTT → 4G → 回执）</td><td class="mono">1.3 s · PASS</td></tr>
+<tr><td>实测值</td><td class="mono">mv=4093 · adc_mv=2814 · raw=3315 · vdda=3477</td></tr>
+<tr><td>分压自校验</td><td class="mono">4093 × 220/320 = 2814 mV ✓</td></tr>
+<tr><td>20 次连采稳定性</td><td class="mono">±5 mV</td></tr>
+<tr><td>调试命令</td><td><code>!adc [n]</code>（SWD 注入或 PC 串口，连采 n 次打印每次数值）</td></tr>
+<tr><td>Web 入口</td><td>灯控页「电池电压」卡片：读取 / 连续监测（5 s 一次统计 min·max）/ 停止</td></tr>
+</table>
+<div class="mut" style="margin-top:8px">提交：<code>7a52ac9</code>（新增指令）→ <code>786580d</code>（根因修复）。网页三副本 <code>docs/led_app.html</code> / <code>docs/index.html</code> / <code>led_app.html</code> 已同步上线。</div>
+</div>
+
+<h2>八、硬件备忘</h2>
+<div class="card">
+<table>
+<tr><th>项</th><th>值</th></tr>
+<tr><td>LDO</td><td>ME6206A33XG（MICRONE 南京微盟）· 固定 3.3 V · 300 mA · Iq 6~9 µA · 压差 180~400 mV · Vin max 6.5 V</td></tr>
+<tr><td>电源链</td><td>光伏 → D3 SS34 → U8 CN3142（锂电充电）→ VBAT → LDO ME6206A33XG → VCC33（= VDDA）</td></tr>
+<tr><td>分压网络</td><td>R7 100 kΩ（上）+ R8 220 kΩ（下）+ C14 100 nF 并联在 R8 上</td></tr>
+<tr><td>采样开关</td><td>PMOS-Q1 AO3401A，栅极由 NMOS-Q5 AO3400A 驱动，控制信号 PA2 (BAT_EN) 经 R29 1 kΩ</td></tr>
+<tr><td>分压比</td><td class="mono">(R7+R8)/R8 = 320/220 = 1.4545</td></tr>
+<tr><td>节点源阻抗</td><td class="mono">R7 ∥ R8 ≈ 68.6 kΩ</td></tr>
+<tr><td>RC 时间常数</td><td class="mono">68.6 kΩ × 100 nF ≈ 6.9 ms</td></tr>
+</table>
+<div class="bad" style="margin-top:10px"><b>⚠ 重要提醒</b>：STM32F103 的 VDDA 绝对最大额定值为 <b>3.6 V</b>。调试期把 VBAT(≤4.2 V) 短接到 3V3 网络属<b>超规运行</b>，短时间排查可以用，但不要长期挂着 —— 有损伤 MCU 的风险。这也是当初怀疑 LDO 损坏的诱因，实际是测量点被旁路造成的误判。</div>
+</div>
+
+<p class="mut" style="text-align:center;margin-top:22px">
+车牌光伏 ver2 · 电池电压 ADC 调试全记录 · 2026-10-15
+</p>
+
+</div>
+</body>
+</html>
