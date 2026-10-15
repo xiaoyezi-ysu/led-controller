@@ -214,6 +214,32 @@
     </div>
 
     <div class="card">
+        <div class="card-title">电池电压（ADC 查询）</div>
+        <div class="quick-actions">
+            <button class="quick-btn" onclick="sendCmd('adc-query')">读取电压</button>
+            <button class="quick-btn" onclick="startAdcPoll()">连续监测</button>
+            <button class="quick-btn" onclick="stopAdcPoll()">停止</button>
+        </div>
+        <div id="batState" style="font-size:22px;font-weight:600;color:#888;
+             margin-top:14px;text-align:center;font-variant-numeric:tabular-nums;">
+            --.--- V
+        </div>
+        <div id="batDetail" style="font-size:12px;color:#888;margin-top:6px;text-align:center;">
+            尚未读取
+        </div>
+        <div style="font-size:12px;color:#888;margin-top:12px;line-height:1.7;">
+            查询命令：<code>{"cmd":"adc"}</code>（别名 <code>bat</code>）<br>
+            回执：<code>{"cmd":"adc","status":"ok","mv":2724,"adc_mv":1873,"raw":2325}</code><br>
+            ▸ <code>mv</code> = 电池电压（已按 R7 100k / R8 220k 分压还原）；<br>
+            ▸ <code>adc_mv</code> = PA1 实测电压；<code>raw</code> = 12 位原始值。<br>
+            <span style="color:#f9a825;">▸ 采样支路平时断开（PA2 高，0 耗流）</span>，查询瞬间才接通
+            3 ms 并连采 8 次取中值，所以读数可以随时取、不增加待机功耗。<br>
+            ▸ 读数偏低的常见原因：4G 发射瞬时脉冲拉低电池（内阻压降）；
+            <b>连续监测取最小值</b>更接近真实下限。单节锂电 &lt;3.2 V 属低电量。
+        </div>
+    </div>
+
+    <div class="card">
         <div class="card-title">低功耗周期（lp_cycle）</div>
         <div class="input-group">
             <input type="text" id="lpPeriod" placeholder="睡眠时长（分钟，1–1440）" value="30">
@@ -451,6 +477,7 @@
 
                 client.on('error', (err) => { log('错误: ' + err.message, 'err'); setStatus('error'); });
                 client.on('close', () => {
+                    if (adcPollTimer) { clearInterval(adcPollTimer); adcPollTimer = null; }
                     if (isConnected) {
                         isConnected = false; setStatus('disconnected'); log('连接断开', 'err');
                         document.getElementById('btnConnect').textContent = '连接';
@@ -507,6 +534,10 @@
                 msg = JSON.stringify({ cmd: 'lp_cycle_off' });
                 tag = '关闭低功耗周期（回常在线）';
                 lpOn = false;
+            } else if (cmd === 'adc-query') {
+                // 固件：{"cmd":"adc"} -> 回 {"cmd":"adc","status":"ok","mv":..,"adc_mv":..,"raw":..}
+                msg = JSON.stringify({ cmd: 'adc' });
+                tag = '读电池电压';
             } else {
                 // ★ 用固件主推的 Web 格式 {"cmd":"led","color":X,"state":"on|off","bright":0-255}
                 // main.c 里这条走 is_web_led 分支，跳过 ICCID 匹配校验，最稳。
@@ -531,7 +562,8 @@
         function highlightBtn(cmd) {
             // 非灯控指令不碰 LED 高亮（原来先清空再 return，v4g / 周期指令会误灭高亮）
             if (cmd === 'v4g-on' || cmd === 'v4g-off' ||
-                cmd === 'lp-cycle' || cmd === 'lp-cycle-off') return;
+                cmd === 'lp-cycle' || cmd === 'lp-cycle-off' ||
+                cmd === 'adc-query') return;
             document.querySelectorAll('.led-btn').forEach(b => b.classList.remove('active'));
             const map = { red: 0, yellow: 1, green: 2, off: 3 };
             const btns = document.querySelectorAll('.led-btn');
@@ -607,6 +639,42 @@
                     document.getElementById('brightnessValue').textContent = a.bright;
                 }
             }
+            // 电池电压回执：刷新大字读数 + 详情；连续监测顺带统计最小/最大值
+            if (a.cmd === 'adc' && a.mv !== undefined) updateBatState(a);
+        }
+
+        // ---- 电池电压显示 ----
+        let adcPollTimer = null;
+        let adcMin = null, adcMax = null, adcCnt = 0;
+        function updateBatState(a) {
+            const big = document.getElementById('batState');
+            const det = document.getElementById('batDetail');
+            if (!big) return;
+            const v = a.mv / 1000;
+            // 分档着色：≥3.6V 绿 / 3.3~3.6 正常白 / 3.2~3.3 黄 / <3.2 红（低电量）
+            const color = v >= 3.6 ? '#4CAF50' : v >= 3.3 ? '#e0e0e0'
+                        : v >= 3.2 ? '#f9a825' : '#f44336';
+            big.style.color = color;
+            big.textContent = v.toFixed(3) + ' V';
+            adcCnt++; adcMin = (adcMin === null || v < adcMin) ? v : adcMin;
+            adcMax = (adcMax === null || v > adcMax) ? v : adcMax;
+            let extra = '';
+            if (adcPollTimer) {
+                extra = ' ｜ 本次监测 ' + adcCnt + ' 次  min ' + adcMin.toFixed(3)
+                      + ' / max ' + adcMax.toFixed(3) + ' V';
+            }
+            det.textContent = 'PA1 ' + a.adc_mv + ' mV · raw ' + a.raw + extra;
+        }
+        function startAdcPoll() {
+            if (adcPollTimer) return;
+            if (!isConnected) { log('未连接', 'err'); return; }
+            adcMin = null; adcMax = null; adcCnt = 0;
+            log('开始连续监测电池电压（每 5 秒一次，点「停止」结束）', 'time');
+            sendCmd('adc-query');
+            adcPollTimer = setInterval(() => sendCmd('adc-query'), 5000);
+        }
+        function stopAdcPoll() {
+            if (adcPollTimer) { clearInterval(adcPollTimer); adcPollTimer = null; log('已停止连续监测', 'time'); }
         }
 
         function setStatus(state) {
