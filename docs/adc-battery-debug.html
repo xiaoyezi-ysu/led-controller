@@ -31,6 +31,7 @@
   .good{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
   .bad{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
   .warnbox{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
+  .q{background:#f1f5f9;border-left:4px solid #2563eb;border-radius:6px;padding:10px 14px;margin:10px 0;font-size:13.5px}
   code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.5px;font-family:Consolas,monospace}
   pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:11px 14px;font-size:12px;overflow-x:auto;line-height:1.55;font-family:Consolas,monospace}
   .mut{color:var(--mut);font-size:12.5px}
@@ -325,7 +326,68 @@ GPIOA-&gt;BRR  = GPIO_PIN_2;    /* PA2 = 0 → 关断，恢复 0 耗流 */</pre>
 <b>修法</b>：main 里补 <code>MX_ADC1_Init();</code> + <code>bat_adc_sample()</code> 开头加空指针防御。</div>
 </div>
 
-<h2>六、测量方法与踩坑</h2>
+<h2>五·补、Q&amp;A：为什么是 R7∥R8？「电源置零」到底是啥？</h2>
+<div class="card">
+<p class="q" style="font-size:13.5px">
+<b>问</b>：EN=1 时 Q5/Q1 都导通，VBAT 串联 R7 → 再串 R8 → 到地，这个没毛病。
+但算等效电阻时为什么说 R7 和 R8 <b>并联</b>在 C14 两端？R7 又没直接接到地，
+Q5/Q1 都导通也不会接到地啊 —— 难道要手动把 VBAT 短接到地？
+「电源置零」是不是就是拿根导线把 VBAT 接到地？
+</p>
+
+<div class="warnbox" style="background:#eff6ff;border-color:#93c5fd">
+<b>一句话答案</b>：<b>「把电压源短路」是纯数学操作，不是真拿导线把 VBAT 接到地。</b>
+它的物理来源是「<b>理想电压源对电压变化量（ΔV）而言就是交流地</b>」，
+所以对 C14 的充放电（这正是 τ 要描述的过程）来说，R7 那条路等效接地了，
+于是 R7 与 R8 对「变化量」是<b>并联</b>。</div>
+
+<h3>A. 关键：同一个电路，问不同问题要用两套等效</h3>
+<table>
+<tr><th style="width:230px">你要求什么</th><th>用什么电路</th><th>VBAT 怎么处理</th></tr>
+<tr><td><b>C14 稳态电压</b>（ADC 采到多少 mV）</td><td>保留电源，做<b>串联分压</b></td><td class="mono" style="color:#059669">保留 &nbsp;Vth = VBAT × R8/(R7+R8)</td></tr>
+<tr><td><b>时间常数 τ</b>（充得多快）</td><td>只看「从 C14 两端看出去的电阻」</td><td class="mono" style="color:#b91c1c">置零（短路）&nbsp; Rth = R7∥R8</td></tr>
+</table>
+<div class="mut" style="font-size:13px">ADC 想读「电压」→ 用第一行；「50 ms 够不够充满」是速度问题 → 用第二行。两件事两个模型，不矛盾。</div>
+
+<h3>B. 「R7 怎么会并联到地」——因为 VBAT 不是理想悬空</h3>
+<p style="font-size:13.5px">你疑惑的实质是：R7 上端接的是<b>电池</b>，电池又不是地，怎么会跟 R8 并联？</p>
+<p style="font-size:13.5px">答案：对<b>充放电的动态过程（ΔV、ΔI）</b>而言，理想电压源两端电压恒定 ⇒ 它上面<b>永远不会有电压变化</b>
+⇒ 对「变化量」来说它就是一个 0 Ω 通路。这就是「<b>交流地</b>」的含义。物理图像反而更直观 ——
+电容电流有<b>两条</b>通路：</p>
+<pre>路径①：C14 → R8 → GND
+路径②：C14 → R7 → Q1 → VBAT（电池吸收/吐出电流，端电压不变）
+
+两条路都通 ⇒ 从 C14 看出去的等效电阻 = 两路各自电阻并联 = R8 ∥ R7</pre>
+<div class="good" style="font-size:13px">
+<b>一个好接受的类比</b>：往水池充/放水时，池底有两个出口 —— 一个通地（R8→GND），
+一个通「水位永远不变的大湖」（VBAT，容量巨大、水位不动）。对你这个池子的<b>水位变化</b>来说，
+「大湖」和「地」起的作用一样：都能吃进/吐出水量。所以两个出口等效并联。
+</div>
+<div class="mut" style="font-size:13px">
+前提：VBAT 是<b>理想</b>电压源。实际电池有内阻（几十 mΩ 级），相对 100 kΩ 可忽略 ⇒ 本电路近似极好。
+</div>
+
+<h3>C. 叠加定理的角色分清（别混用）</h3>
+<table>
+<tr><th>求什么</th><th>怎么算</th></tr>
+<tr><td><b>Vth</b>（开路电压）</td><td>VBAT <b>保留</b>，算分压点电压 —— 这一步<b>不是</b>置零</td></tr>
+<tr><td><b>Rth</b>（等效内阻）</td><td>所有独立源置零：<b>电压源短路、电流源开路</b></td></tr>
+</table>
+<div class="mut" style="font-size:13px">叠加定理多用来算 V/Ⅰ；算 Rth 优先用戴维南「独立源置零」这套规则。</div>
+<p style="font-size:13.5px">两者合起来 = 标准<b>戴维南 + 一阶 RC 阶跃</b>模型：</p>
+<pre>V_C(t) = Vth × (1 − e^(−t/τ))，   τ = (R7∥R8) × C14
+      = 0.6875 × VBAT × (1 − e^(−t/τ))</pre>
+<div class="mut" style="font-size:13px">这就是固件里 <code>HAL_Delay(50)</code> ≈ 7.2τ 的全部理论依据（见 3.1 / 3.2 节）。</div>
+
+<h3>D. 本项目实证：Q1 通断真的会改变「看出去的电阻」</h3>
+<div class="bad" style="font-size:13px">
+不只是纸上谈兵 —— <b>旧固件 PA2 极性写反时（Q1 截断）</b>，R7 上端悬空，该通路断开，
+从 C14 看出去只剩 R8 + 浮空残荷 ⇒ 读数完全不可信。这正是 10-15 调试时 raw 异常的<b>缺陷②</b>。
+所以「Q1 通断改变等效电阻」在板上真踩过。
+</div>
+</div>
+
+
 <div class="card">
 <details open>
 <summary>SWD 注入脚本：每次都要现场解析符号地址</summary>
