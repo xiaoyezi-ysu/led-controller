@@ -155,6 +155,28 @@ static uint8_t  g_ack_pending = 0;
 #define AUTO_LP_BOOT_MS      15000u  /* 上电后先在线 15s：等 4G/MQTT 起来、留 PC 逃生窗口 */
 #define AUTO_BKP_DR          BKP->DR3  /* VBAT 域持久标志：0x4F46=自动低功耗被禁用 */
 #define AUTO_BKP_OFF_MAGIC   0x4F46u   /* 'O''F'（Off）：用户主动禁用自动低功耗 */
+
+/* ===== 电池低压保护（Low-Battery Stop）=====================================
+   ★ 2026-10-15：VBAT 掉到阈值以下 → 自动进 Stop 省电 → 定时醒来复测 →
+     电压回升到恢复阈值以上就回常在线（带迟滞，避免在阈值附近反复抖动）。
+   语义：
+     - 监测量 = g_bat_mv（VBAT，ADC 指令同款口径，含 VREFINT 反算）。
+     - 进睡阈值 3.00 V（单节锂电过放保护线），恢复阈值 3.30 V（迟滞 0.3 V）。
+     - 睡下后挂 RTC 闹钟 BAT_LP_POLL_S(60s) 定时醒来复测；仍低就继续睡。
+     - 防变砖：RTC 未就绪绝不下睡（复用既有 Stop 门禁）。
+     - 与 lp_cycle 不冲突：本功能在 lp_cycle 未使能时才动作（lp_cycle 优先）。
+   ESC：'!batlp off' 关闭本功能（BKP_DR4=0x4F46 持久），'!batlp on' 恢复。 */
+#define BAT_LP_ENTER_MV      3000u   /* VBAT < 3.00 V → 进 Stop */
+#define BAT_LP_RESUME_MV     3300u   /* VBAT > 3.30 V → 回在线（迟滞 0.3 V） */
+#define BAT_LP_POLL_S        60u     /* 睡下后每 60s 醒一次复测 */
+#define BAT_LP_CHECK_MS      10000u  /* 在线期每 10s 测一次电池 */
+#define BAT_BKP_DR           BKP->DR4  /* VBAT 域：0x4F46=低压保护被禁用 */
+#define BAT_BKP_OFF_MAGIC    0x4F46u
+static uint8_t  s_batlp_en     = 1;   /* 1 = 低压保护使能（可被 BKP_DR4/命令关） */
+static uint8_t  s_bat_sleep    = 0;   /* 1 = 正因低压处于 Stop 睡眠态 */
+static uint32_t s_bat_last_ms  = 0;   /* 上次电池检测时刻 */
+static uint16_t s_bat_mv_last  = 0;   /* 最近一次 VBAT（SWD 可读） */
+
 static uint8_t  g_lp_cycle   = 0;     /* 1 = 循环模式使能 */
 static uint32_t g_lp_period_s = LP_DEFAULT_PERIOD_S; /* 上报周期（秒），指令 period_min 设定 */
 static uint16_t g_lp_cycles  = 0;     /* 循环次数上限：0 = 无限；N>0 = 睡满 N 轮后自动退出 */
@@ -696,6 +718,7 @@ static void SEQ_HandleCmd(const char *line)
     printf("  !adc [n]                              读电池电压（PA1/R7R8 分压），n 次取最小\r\n");
     printf("  !online                               取消自动低功耗并常在线（置 BKP_DR3 禁用标志）\r\n");
     printf("  !lpon                                 清除 BKP_DR3，恢复上电自动低功耗(2h)\r\n");
+    printf("  !batlp [on|off|status]                电池低压保护：<3.0V 进 Stop，>3.3V 回在线\r\n");
     printf("  !help                                 本帮助\r\n");
     printf("  例: !seq 60   !day 30 3 G 255   !adc\r\n");
     return;
@@ -719,6 +742,35 @@ static void SEQ_HandleCmd(const char *line)
     AUTO_BKP_DR = 0;
     printf("AUTO-LP: re-enabled (BKP_DR3 cleared) -> next power-up auto-enters %us cycle\r\n",
            (unsigned)LP_DEFAULT_PERIOD_S);
+    return;
+  }
+
+  /* 电池低压保护：!batlp [on|off|status]（off 持久禁用，写 BKP_DR4） */
+  if (strncmp(line, "batlp", 5) == 0)
+  {
+    const char *p = line + 5;
+    while (*p == ' ') p++;
+    if (strncmp(p, "on", 2) == 0)
+    {
+      s_batlp_en = 1; BAT_BKP_DR = 0;
+      printf("BAT-LP: ON (BKP_DR4 cleared) enter<%u mV resume>%u mV\r\n",
+             (unsigned)BAT_LP_ENTER_MV, (unsigned)BAT_LP_RESUME_MV);
+    }
+    else if (strncmp(p, "off", 3) == 0)
+    {
+      s_batlp_en = 0; BAT_BKP_DR = BAT_BKP_OFF_MAGIC;
+      s_bat_sleep = 0; g_low_power = 0; HAL_ResumeTick();
+      DTU_SetLowPower(0); V4G_Set(1);
+      printf("BAT-LP: OFF (BKP_DR4=0x%04X) -> never sleep on low battery\r\n",
+             (unsigned)BAT_BKP_DR);
+    }
+    else
+    {
+      printf("BAT-LP: %s  VBAT_last=%u mV  sleeping=%u  enter<%u resume>%u poll=%us\r\n",
+             s_batlp_en ? "ON" : "OFF", (unsigned)s_bat_mv_last,
+             (unsigned)s_bat_sleep, (unsigned)BAT_LP_ENTER_MV,
+             (unsigned)BAT_LP_RESUME_MV, (unsigned)BAT_LP_POLL_S);
+    }
     return;
   }
 
@@ -986,6 +1038,13 @@ int main(void)
     }
   }
 
+  /* ---- 电池低压保护开关：BKP_DR4 == 0x4F46 则禁用（持久，掉电不丢）---- */
+  s_batlp_en = (BAT_BKP_DR == BAT_BKP_OFF_MAGIC) ? 0u : 1u;
+  s_bat_last_ms = HAL_GetTick();   /* 首次检测延后 BAT_LP_CHECK_MS，让 4G 先起来 */
+  printf("BAT-LP: %s (enter<%u mV, resume>%u mV, poll %us)\r\n",
+         s_batlp_en ? "ON" : "OFF (BKP_DR4)",
+         (unsigned)BAT_LP_ENTER_MV, (unsigned)BAT_LP_RESUME_MV, (unsigned)BAT_LP_POLL_S);
+
   /* USER CODE END 2 */
 
   /* Infinite loop — SysTick wakes every 1ms, WFI sleeps otherwise */
@@ -998,7 +1057,7 @@ int main(void)
     /* lp_cycle 睡眠态 = 真 Stop（SLEEPDEEP=1，仅 RTC 闹钟 EXTI17 能唤醒）；
        其余（含旧 sleep 模式）= Sleep（内核停、外设时钟在，UART RX 可唤醒，
        模组维持 MQTT —— 这个语义依赖 UART 唤醒，绝不能进 Stop）。 */
-    uint8_t want_stop = (g_lp_cycle && s_lp_state == 3) || s_seq_stop;
+    uint8_t want_stop = (g_lp_cycle && s_lp_state == 3) || s_seq_stop || s_bat_sleep;
     /* ⚠ Stop 门禁（2026-10-14 加固）：没有已武装的唤醒源就绝不下睡 ——
        F1 进 Stop 后唯一唤醒通道是 RTC 闹钟（EXTI17），闹钟没装上就睡下去
        = 永久变砖。这里把"想睡"和"能睡"分开判，异常时退回常在线自愈。 */
@@ -1022,6 +1081,10 @@ int main(void)
     if (g_rtc_alarm_hit)
     {
       g_rtc_alarm_hit = 0;
+      /* ★ 2026-10-15：Stop 唤醒瞬间 APB1 与 RTC 未同步（RSF=0），此刻写 CRH/NVIC
+         会被丢弃 ⇒ 下一发闹钟没中断 ⇒ 醒来又立刻睡回去 = 锁死。
+         第一件事就是把闹钟中断门禁重开（内部等 RSF=1）。 */
+      RTC_APP_RearmIRQ();
       if (s_seq_run && s_seq_wait)
       {
         /* 工况测试的 Stop 醒来：F1 退出 Stop 后 SYSCLK = HSI，
@@ -1058,6 +1121,42 @@ int main(void)
          t_in >= LP_SESSION_MS，直接跳收尾。实测会话只剩 ~13.7 s（本该 90 s），
          并连带导致 4G 来不及注网（发不出 report）、nettime 授时必然失败。
          这里刷新 now，供本圈剩余逻辑（会话计时 / DTU / ACK / SC7）使用。 */
+      else if (s_bat_sleep)
+      {
+        /* 电池低压 Stop 醒来：F1 退出 Stop 后 SYSCLK = HSI，先重配时钟。
+           4G 全程断电（省电），醒来只复测电池：> 恢复阈值就回常在线，
+           否则继续睡（重挂闹钟）。 */
+        HAL_ResumeTick();
+        SystemClock_Config();
+        uint16_t mv = bat_adc_sample();
+        s_bat_mv_last = (mv == 0xFFFFu) ? 0 : mv;
+        if (mv != 0xFFFFu && mv >= BAT_LP_RESUME_MV)
+        {
+          s_bat_sleep = 0;
+          DTU_SetLowPower(0);
+          g_low_power = 0;
+          V4G_Set(1);              /* 4G 上电回常在线 */
+          printf("BAT-LP: wake VBAT=%u mV >= %u -> RESUME online\r\n",
+                 (unsigned)mv, (unsigned)BAT_LP_RESUME_MV);
+        }
+        else
+        {
+          /* 仍偏低：重挂闹钟继续睡（ArmIn 失败则放弃睡眠回在线，绝不变砖）。 */
+          if (RTC_APP_ArmIn(BAT_LP_POLL_S) == 0)
+          {
+            printf("BAT-LP: still low VBAT=%u mV -> sleep again (+%us)\r\n",
+                   (unsigned)mv, (unsigned)BAT_LP_POLL_S);
+          }
+          else
+          {
+            s_bat_sleep = 0;
+            DTU_SetLowPower(0);
+            g_low_power = 0;
+            V4G_Set(1);
+            printf("BAT-LP: re-arm failed -> abort sleep, stay online\r\n");
+          }
+        }
+      }
       now = HAL_GetTick();
     }
 
@@ -1102,6 +1201,45 @@ int main(void)
     {
       DTU_Process(now);
       RTC_APP_WDG_Poll(now);   /* 软看门狗喂狗：清醒期 ≥1s 节流重装心跳闹钟 */
+
+      /* ---- 电池低压保护：在线期每 BAT_LP_CHECK_MS 测一次 VBAT --------------
+         低于进睡阈值 → 关 4G → 挂闹钟 → 置 s_bat_sleep，主循环顶部 WFI 即 Stop。
+         lp_cycle 使能时本功能让位（lp_cycle 优先，避免两套睡眠状态机打架）。
+         RTC 未就绪则拒绝下睡（绝不能没唤醒源就睡）。 */
+      if (s_batlp_en && !g_lp_cycle && !s_bat_sleep)
+      {
+        uint32_t since = now - s_bat_last_ms;
+        if (s_bat_last_ms == 0 || since >= BAT_LP_CHECK_MS)
+        {
+          s_bat_last_ms = now;
+          uint16_t mv = bat_adc_sample();
+          s_bat_mv_last = (mv == 0xFFFFu) ? 0 : mv;
+          if (mv != 0xFFFFu && mv < BAT_LP_ENTER_MV)
+          {
+            if (!RTC_APP_Ready())
+            {
+              printf("BAT-LP: VBAT=%u mV low but RTC unavailable -> stay online\r\n",
+                     (unsigned)mv);
+            }
+            else if (RTC_APP_ArmIn(BAT_LP_POLL_S) != 0)
+            {
+              printf("BAT-LP: alarm arm FAILED -> stay online\r\n");
+            }
+            else
+            {
+              printf("BAT-LP: VBAT=%u mV < %u -> enter Stop, poll every %us\r\n",
+                     (unsigned)mv, (unsigned)BAT_LP_ENTER_MV, (unsigned)BAT_LP_POLL_S);
+              V4G_Set(0);          /* 关 4G 省电 */
+              json_len = 0; json_ready = 0;
+              rbuf_rd = rbuf_wr;
+              LED_AllOff();
+              g_low_power = 1;
+              DTU_SetLowPower(1);
+              s_bat_sleep = 1;     /* 主循环顶部 WFI 即 Stop */
+            }
+          }
+        }
+      }
     }
 
     /* 延时 ACK：到点后把排队的 ACK 发给 4G 模组（尾带 \r\n，模组按行打包上报） */
