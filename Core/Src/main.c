@@ -138,17 +138,82 @@ static uint8_t  g_ack_pending = 0;
      收尾：+++ 进指令模式 → AT+CCLK? 授时（探测式，失败也无妨）→ 挂 RTC 闹钟
            → 关 4G → Stop（电流 ≈1.16 mA，见 docs/r24-removed-1mA.html）
      唤醒：RTC 闹钟 EXTI17 自动唤醒 → 重开会话
-   防变砖：仅指令进入；SW4 复位/重新上电后回到普通在线模式；
-           RTC 未就绪则拒绝进入循环。 */
+   ★ 2026-10-15 变更：**上电后默认自动进低功耗循环，周期 2 h**（生产形态）。
+     旧版「SW4 复位/重新上电后回到普通在线模式」改为：上电先在线 AUTO_LP_BOOT_MS
+     (15s) 让 4G/MQTT 起来，随后若无干预则自动进 2h 循环。
+     防变砖 / 逃生：
+       - RTC 未就绪 ⇒ 拒绝自动进入，留常在线（绝不下睡，杜绝睡死）。
+       - 上电 15s 窗口内从 PC 串口发 "!online" ⇒ 取消本次自动低功耗（只影响本次）。
+       - BKP_DR3 打 0x4F46('OF') ⇒ **永久禁用**自动低功耗（VBAT 域，掉电不丢）；
+         用 "!lpon" 命令清除该标志、恢复自动低功耗。
+       - 服务器 lp_cycle_off 仍可随时退出当前循环（回常在线）。 */
 #define LP_SESSION_MS    90000u   /* 每个会话最长在线时长 */
 #define LP_REPORT_AT_MS  45000u   /* 会话内上报时刻（MQTT 通常已连上） */
+/* ★ 2026-10-15：上电默认周期 = 2 h（生产形态）。指令 period_min 可覆盖。 */
+#define LP_DEFAULT_PERIOD_S  7200u   /* 2 h */
+/* ★ 上电自动进低功耗循环的状态机参数（见 AUTO_LP_* 说明） */
+#define AUTO_LP_BOOT_MS      15000u  /* 上电后先在线 15s：等 4G/MQTT 起来、留 PC 逃生窗口 */
+#define AUTO_BKP_DR          BKP->DR3  /* VBAT 域持久标志：0x4F46=自动低功耗被禁用 */
+#define AUTO_BKP_OFF_MAGIC   0x4F46u   /* 'O''F'（Off）：用户主动禁用自动低功耗 */
 static uint8_t  g_lp_cycle   = 0;     /* 1 = 循环模式使能 */
-static uint32_t g_lp_period_s = 1800; /* 上报周期（秒），指令 period_min 设定 */
+static uint32_t g_lp_period_s = LP_DEFAULT_PERIOD_S; /* 上报周期（秒），指令 period_min 设定 */
 static uint16_t g_lp_cycles  = 0;     /* 循环次数上限：0 = 无限；N>0 = 睡满 N 轮后自动退出 */
+static uint8_t  s_auto_lp       = 0;  /* 1 = 本次上电要做自动低功耗（尚未启动） */
+static uint8_t  s_auto_lp_done  = 0;  /* 1 = 本轮已启动或已取消 */
 static uint16_t s_lp_done    = 0;     /* 已完成的睡眠轮数（每次 RTC 唤醒 +1） */
 static uint8_t  s_lp_state    = 0;    /* 0 idle 1 session 2 closing 3 sleeping */
 static uint32_t s_lp_t0       = 0;    /* 会话开始时刻 */
 static uint8_t  s_lp_reported = 0;
+
+/* ===== 电池电压 ADC 采样（车牌板 PA1 = ADC1_IN1，ADC_BAT 分压）==============
+   ver2 原理图：VBAT → PMOS-Q1(栅由 PA2/BAT_EN 经 NMOS-Q5 驱动) → R7 100k
+                → ADC_BAT → R8 220k → GND
+   ⇒ VBAT = Vadc × (R7+R8)/R8 = Vadc × 320k/220k = Vadc × 1.4545
+   ★ 极性（2026-10-15 实测定案）：PA2=1 → Q5 导通 → Q1 栅拉低 → 支路**接通**；
+     PA2=0 → 支路**断开**（静态 0 耗流）。旧代码写反过，务必以本行为准。
+   ★ 基准（同日实测定案）：**VDDA 必须实测**，不能假设 3.3 V。
+     本板电源为光伏/锂电 → CN3142 充电 → VBAT → LDO ME6206A33 → VCC33，
+     但调试期曾把 VBAT 直短到 3V3 网络 ⇒ VDDA 变成 4.0~4.2 V，用 3300 假设
+     去算会系统性偏低 ~20%。用 VREFINT 反算后两种接法都能自动适配：
+       VDDA(实测) = 1.20V × 4095 / vrefint_raw
+     注意 F1 上 VREFINT 会随 VDDA 一起变 ⇒ **纯分压比的 raw 恒 ≈ 0.6875×4095**，
+     只有 VREFINT 反算才测得出绝对电压。VREFINT 标称 1.20V ±5% ⇒ 绝对精度 ±5%。
+   ★ 采样时间：源阻抗 = R7∥R8 ≈ 68.6 kΩ、C14 100 nF ⇒ RC ≈ 6.9 ms，
+     故必须等 ~50 ms 再采，且 ADC 采样时间用 239.5 周期（旧 1.5 周期严重不足）。 */
+#define BAT_ADC_DIV_NUM   320u   /* R7 + R8 (kΩ) */
+#define BAT_ADC_DIV_DEN   220u   /* R8 (kΩ) */
+#define BAT_ADC_VREF_MV   3300u  /* 退路：VREFINT 反算失败时才用（正常不该走到） */
+volatile uint16_t g_bat_adc_raw = 0;      /* 最近一次 ADC 原始值（0..4095） */
+volatile uint16_t g_bat_mv      = 0;      /* 电池电压 mV（已乘分压比） */
+volatile uint16_t g_bat_adc_mv  = 0;      /* ADC 引脚电压 mV（分压点） */
+volatile uint16_t g_vrefint_raw = 0;      /* VREFINT(1.2V) 原始值，0=未测 */
+volatile uint16_t g_vdda_mv     = 0;      /* 实测 VDDA mV（VREFINT 反算，±5%） */
+
+/* 读内部基准 VREFINT（ADC1_IN17，典型 1.20 V）反算 VDDA。
+   用于把"假设 3.3 V"变成实测基准 —— 2026-10-15 排查电压偏低时加入。 */
+static uint16_t adc_read_vdda(void)
+{
+  ADC_ChannelConfTypeDef sConfig = {0};
+  uint16_t raw;
+
+  sConfig.Channel = ADC_CHANNEL_VREFINT;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;   /* VREFINT 要求 ≥5 µs */
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) return 0xFFFFu;
+  if (HAL_ADC_Start(&hadc1) != HAL_OK) return 0xFFFFu;
+  if (HAL_ADC_PollForConversion(&hadc1, 5) != HAL_OK) { HAL_ADC_Stop(&hadc1); return 0xFFFFu; }
+  raw = (uint16_t)HAL_ADC_GetValue(&hadc1);
+  HAL_ADC_Stop(&hadc1);
+
+  /* 恢复 PA1 通道，别影响后续 bat_adc_sample */
+  sConfig.Channel = ADC_CHANNEL_1;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) return 0xFFFFu;
+
+  if (raw < 100) return 0xFFFFu;      /* 异常保护 */
+  g_vrefint_raw = raw;
+  g_vdda_mv = (uint16_t)((1200u * 4095u) / raw);
+  return g_vdda_mv;
+}
 
 /* USER CODE END PV */
 
@@ -181,6 +246,63 @@ static int json_int(const char *json, const char *key, int def, int lo, int hi)
   if (v < lo) v = lo;
   if (v > hi) v = hi;
   return v;
+}
+
+/* ===== 电池电压采样（bat_adc_sample）=====================================
+   时序（约 15 ms，阻塞，不影响 4G 会话）：
+     ① PA2=0 拉低 → NMOS-Q5 导通 → PMOS-Q1 栅被拉低 → Q1 导通，分压支路接上 VBAT
+     ② 等 ≥2 ms 让 R7(100k)+R8(220k) 与 C14(100nF) 的 RC 稳定
+        （τ = 100k ∥ 220k × 100n ≈ 6.9 µs，2 ms 余量足够）
+     ③ 单次软件触发采样（MX_ADC1_Init 已配 ADC_CHANNEL_1 / 1.5 周期采样）
+     ④ 立即 PA2=1 断开支路（恢复 0 耗流；分压支路静态 320kΩ 跨 VBAT ≈ 11 µA）
+   返回 ADC 原始值（0..4095）；HAL 失败返回 0xFFFF。
+   注：采样期间模组/LED 的脉冲负载会拉低 VBAT（电池内阻），
+       所以读数是"此刻"电压，低压告警请多次取最小值。 */
+static uint16_t bat_adc_sample(void)
+{
+  uint16_t raw = 0, lo = 0xFFFFu, hi = 0;
+
+  /* 防御：MX_ADC1_Init() 未跑过时 hadc1.Instance == NULL，直接喂给 HAL 会
+     在 ADC_Enable() 里写空指针 => HardFault。这里先挡掉（2026-10-15 踩过）。 */
+  if (hadc1.Instance == NULL) { g_bat_adc_raw = 0xFFFFu; return 0xFFFFu; }
+
+  /* ⚠ 极性对照原理图（2026-10-15 实测定案）：BAT_EN(PA2)=高 → R29 → NMOS-Q5
+     栅极高 → Q5 导通 → PMOS-Q1 栅被拉低 → Q1 导通 ⇒ 接通分压支路 = PA2=1！
+     （旧版写反成 PA2=0 接通：采样时支路其实是断的，读到的是 C14 浮空残荷，
+     数值系统性偏低 ~30% 且无意义；平时 PA2=1 反而把支路常通，白漏 12 µA。） */
+  GPIOA->BSRR = GPIO_PIN_2;                 /* PA2 = 1，Q5/Q1 导通接通分压支路 */
+  /* ⚠ 等待时间定案（2026-10-15 实测）：τ = (R7∥R8)×C14 = 68.6kΩ × 100nF ≈ 6.9 ms
+     （旧注释写 6.9 µs 是 µs/ms 笔误！旧等待 3 ms = 0.43τ，节点还在爬坡，
+     实测只读出 2.2 V / 真值 2.72 V）。50 ms ≈ 7.2τ，误差 <0.1%。 */
+  HAL_Delay(50);
+
+  /* 连续采 8 次取中值（去脉冲噪声） */
+  uint8_t i;
+  for (i = 0; i < 8; i++)
+  {
+    if (HAL_ADC_Start(&hadc1) != HAL_OK) { GPIOA->BRR = GPIO_PIN_2; return 0xFFFFu; }
+    if (HAL_ADC_PollForConversion(&hadc1, 5) != HAL_OK) { HAL_ADC_Stop(&hadc1); GPIOA->BRR = GPIO_PIN_2; return 0xFFFFu; }
+    raw = (uint16_t)HAL_ADC_GetValue(&hadc1);
+    HAL_ADC_Stop(&hadc1);
+    if (raw < lo) lo = raw;
+    if (raw > hi) hi = raw;
+  }
+  GPIOA->BRR = GPIO_PIN_2;                  /* PA2 = 0，Q5/Q1 关断，支路断开省电 */
+
+  raw = (uint16_t)((lo + hi) / 2u);         /* 去极值中值，抗单点毛刺 */
+  g_bat_adc_raw = raw;
+
+  /* 用 VREFINT 实测 VDDA 做基准（测不出则退回 3300 假设值）。
+     ⚠ 2026-10-15 实锤：本板 VCC33 = 电池直通（万用表实测 4.0~4.2V），
+     根本不是 3.3V！旧 3300 假设导致读数系统性偏低 ~20%。
+     且 VDDA=VBAT ⇒ 纯分压的 raw 恒 ≈ 0.6875×4095，只有 VREFINT 反算才测得出
+     绝对电压。VREFINT 标称 1.20V ±5%，绝对精度 ±5% 量级。 */
+  uint16_t vdda = adc_read_vdda();
+  uint16_t vref = (vdda != 0xFFFFu && vdda > 2500 && vdda < 4600) ? vdda : BAT_ADC_VREF_MV;
+
+  g_bat_adc_mv  = (uint16_t)(((uint32_t)raw * vref) / 4095u);
+  g_bat_mv      = (uint16_t)(((uint32_t)g_bat_adc_mv * BAT_ADC_DIV_NUM) / BAT_ADC_DIV_DEN);
+  return raw;
 }
 
 /* ===== lp_cycle 辅助函数 ================================================== */
@@ -571,8 +693,54 @@ static void SEQ_HandleCmd(const char *line)
     printf("  !day [idle_s] [rounds] [R|Y|G] [bright]  压缩日\r\n");
     printf("  !stop                                 中止测试，回常在线\r\n");
     printf("  !wdg [status|hang|hang_irq|on|off|T]  软看门狗状态/故障注入/配置\r\n");
+    printf("  !adc [n]                              读电池电压（PA1/R7R8 分压），n 次取最小\r\n");
+    printf("  !online                               取消自动低功耗并常在线（置 BKP_DR3 禁用标志）\r\n");
+    printf("  !lpon                                 清除 BKP_DR3，恢复上电自动低功耗(2h)\r\n");
     printf("  !help                                 本帮助\r\n");
-    printf("  例: !seq 60   !day 30 3 G 255\r\n");
+    printf("  例: !seq 60   !day 30 3 G 255   !adc\r\n");
+    return;
+  }
+
+  /* 取消自动低功耗 → 常在线（同时持久禁用，掉电不丢；用 !lpon 恢复） */
+  if (strncmp(line, "online", 6) == 0)
+  {
+    s_auto_lp = 0; s_auto_lp_done = 1;
+    g_lp_cycle = 0; s_lp_state = 0; s_lp_done = 0;
+    g_low_power = 0; HAL_ResumeTick(); DTU_SetLowPower(0); V4G_Set(1);
+    AUTO_BKP_DR = AUTO_BKP_OFF_MAGIC;   /* BKP_DR3 打禁用标志 */
+    printf("AUTO-LP: cancelled by '!online' -> stay online, auto-lp DISABLED "
+           "(BKP_DR3=0x%04X; use !lpon to re-enable)\r\n", (unsigned)AUTO_BKP_DR);
+    return;
+  }
+
+  /* 恢复上电自动低功耗：清 BKP_DR3 禁用标志 */
+  if (strncmp(line, "lpon", 4) == 0)
+  {
+    AUTO_BKP_DR = 0;
+    printf("AUTO-LP: re-enabled (BKP_DR3 cleared) -> next power-up auto-enters %us cycle\r\n",
+           (unsigned)LP_DEFAULT_PERIOD_S);
+    return;
+  }
+
+  if (strncmp(line, "adc", 3) == 0)
+  {
+    /* 读电池电压。带参数 N = 连续采 N 次打印每次数值（看 4G 脉冲造成的下坠）。
+       不加参数 = 单次。模拟 MQTT 的 {"cmd":"adc"} 走的是另一条分支。 */
+    const char *p = line + 3;
+    while (*p == ' ') p++;
+    int n = (*p >= '0' && *p <= '9') ? atoi(p) : 1;
+    if (n < 1) n = 1;
+    if (n > 100) n = 100;
+    int k;
+    for (k = 0; k < n; k++)
+    {
+      uint16_t raw = bat_adc_sample();
+      if (raw == 0xFFFFu) { printf("ADC: sample FAILED\r\n"); break; }
+      printf("ADC[%d/%d]: raw=%u  PA1=%u mV  VBAT=%u mV (%u.%03u V)\r\n",
+             k + 1, n, (unsigned)raw, (unsigned)g_bat_adc_mv, (unsigned)g_bat_mv,
+             (unsigned)(g_bat_mv / 1000u), (unsigned)(g_bat_mv % 1000u));
+      if (k + 1 < n) HAL_Delay(200);
+    }
     return;
   }
 
@@ -729,6 +897,12 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
+  /* ⚠ 2026-10-15 修复：MX_ADC1_Init() 之前一直被漏掉（CubeMX 生成后没接进 main）。
+     后果：hadc1.Instance 恒为 NULL，首次 bat_adc_sample() 调 HAL_ADC_Start ->
+     ADC_Enable() 去写 NULL->CR2（地址 0x24）=> IMPRECISERR 总线错误 => HardFault，
+     整板死机（症状：g_test_go 永不被消费、_4g_state 停在残值 0x0E）。
+     ADC1 时钟由 HAL_ADC_MspInit() 使能，所以这里调用即可。 */
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
   /* ---- 最先起来：RTC + 软看门狗 -----------------------------------------
@@ -778,6 +952,39 @@ int main(void)
   LED_Init();
 
   DTU_Init();
+
+  /* ---- 上电自动低功耗（默认 2 h 周期）-----------------------------------
+     生产形态：上电后自动进入 lp_cycle 循环（睡 2h → 醒 → 上报 → 再睡）。
+     安全闸门（任一不满足 ⇒ 放弃自动进入，留常在线）：
+       ① RTC 必须就绪（否则没有唤醒源，进 Stop = 变砖）；
+       ② BKP_DR3 未打 0x4F46 禁用标志（用户/调试可用 "!lpon"/"!online" 管理）；
+       ③ 硬件上不区分复位源（POR/SWD/WDG 一视同仁 —— WDG 自愈复位后也应回到
+          低功耗，否则看门狗一咬就把设备留在常在线，失能）。
+     本次先置 s_auto_lp=1，主循环在线 AUTO_LP_BOOT_MS(15s) 后自动切到收尾入睡；
+     期间任何 PC 串口 "!online" 或 MQTT lp_cycle_off 都能取消。
+     注意：BKP 时钟在 RTC_APP_Init 里已开（RTC 未就绪时 DR3 读不准，但那种
+     情况本就拒绝自动进入，无碍）。 */
+  {
+    uint8_t rtc_ok  = RTC_APP_Ready();
+    uint8_t bkp_off = (AUTO_BKP_DR == AUTO_BKP_OFF_MAGIC) ? 1u : 0u;
+    if (!rtc_ok)
+    {
+      printf("AUTO-LP: skip (RTC unavailable -> cannot arm wake)\r\n");
+    }
+    else if (bkp_off)
+    {
+      printf("AUTO-LP: disabled by BKP_DR3 ('!online' set) -> stay online\r\n");
+    }
+    else
+    {
+      s_auto_lp = 1;
+      s_lp_done = 0;
+      s_lp_t0   = HAL_GetTick();   /* 在线窗口起点（也是会话计时基准） */
+      printf("AUTO-LP: armed, will enter lp_cycle period=%us after %ums online "
+             "(send '!online' to cancel)\r\n",
+             (unsigned)g_lp_period_s, (unsigned)AUTO_LP_BOOT_MS);
+    }
+  }
 
   /* USER CODE END 2 */
 
@@ -960,6 +1167,24 @@ int main(void)
       SEQ_HandleCmd((const char *)g_test_cmd);
     }
 
+    /* ---- 上电自动低功耗：在线窗口结束后启动 ---- */
+    if (s_auto_lp && !s_auto_lp_done)
+    {
+      /* 在线满 AUTO_LP_BOOT_MS 就切到收尾入睡（state=2 → LP_CloseAndSleep）。
+         不在这里赶 ACK/报告，收尾函数自己会 flush ACK 队列。 */
+      if ((uint32_t)(HAL_GetTick() - s_lp_t0) >= AUTO_LP_BOOT_MS)
+      {
+        s_auto_lp_done = 1;
+        g_lp_cycle   = 1;         /* 使能循环模式 */
+        g_lp_cycles  = 0;         /* 无限循环（生产形态：一直 2h 一轮） */
+        g_lp_period_s = LP_DEFAULT_PERIOD_S;
+        s_lp_done    = 0;
+        s_lp_state   = 2;         /* 主循环下一圈走收尾 → Stop */
+        printf("AUTO-LP: enter lp_cycle now (period=%us, infinite)\r\n",
+               (unsigned)g_lp_period_s);
+      }
+    }
+
     /* ---- lp_cycle 会话推进 ---- */
     if (g_lp_cycle && s_lp_state == 1)
     {
@@ -1051,7 +1276,11 @@ int main(void)
                        (strstr((char*)json_buf, "\"cmd\":\"v4g\"") != NULL) ||
                        (strstr((char*)json_buf, "\"cmd\": \"v4g\"") != NULL) ||
                        (strstr((char*)json_buf, "\"cmd\":\"time\"") != NULL) ||
-                       (strstr((char*)json_buf, "\"cmd\": \"time\"") != NULL);
+                       (strstr((char*)json_buf, "\"cmd\": \"time\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\":\"adc\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\": \"adc\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\":\"bat\"") != NULL) ||
+                       (strstr((char*)json_buf, "\"cmd\": \"bat\"") != NULL);
       uint8_t match = 1;
       if (!is_web_led && !is_sys_cmd && my_iccid[0])
       {
@@ -1133,6 +1362,33 @@ int main(void)
           else
             printf("LP: RTC set FAILED (bad epoch or RTC unavailable)\r\n");
           ack_cmd = "time";
+        }
+        /* 查询电池电压：{"cmd":"adc"} 或 {"cmd":"bat"}
+           返回 {"cmd":"adc","status":"ok","mv":<电池mV>,"adc_mv":<PA1 mV>,"raw":<0..4095>}
+           车牌板：PA1(ADC1_IN1) 经 R7 100k / R8 220k 分压测 VBAT，PA2(BAT_EN) 控制通断 */
+        else if (strstr((char*)json_buf, "\"cmd\":\"adc\"") || strstr((char*)json_buf, "\"cmd\": \"adc\"") ||
+                 strstr((char*)json_buf, "\"cmd\":\"bat\"") || strstr((char*)json_buf, "\"cmd\": \"bat\""))
+        {
+          uint16_t raw = bat_adc_sample();
+          if (raw == 0xFFFFu)
+          {
+            printf("ADC: sample FAILED (HAL error)\r\n");
+            ack_cmd = "adc_err";        /* 走下面通用分支，回 {"cmd":"adc_err",...} */
+          }
+          else
+          {
+            printf("ADC: raw=%u, PA1=%u mV, VBAT=%u mV, VDDA=%u mV (vrefint_raw=%u)\r\n",
+                   (unsigned)raw, (unsigned)g_bat_adc_mv, (unsigned)g_bat_mv,
+                   (unsigned)g_vdda_mv, (unsigned)g_vrefint_raw);
+            /* 本指令字段多，通用分支的固定格式装不下 ⇒ 就地组包入队，
+               并把 ack_cmd 保持 NULL，免得下面通用分支再用旧格式覆盖一次 */
+            snprintf(g_ack_buf, sizeof(g_ack_buf),
+                     "{\"cmd\":\"adc\",\"status\":\"ok\",\"mv\":%u,\"adc_mv\":%u,\"raw\":%u,\"vdda\":%u}\r\n",
+                     (unsigned)g_bat_mv, (unsigned)g_bat_adc_mv, (unsigned)raw,
+                     (unsigned)g_vdda_mv);
+            g_ack_at = now + ACK_DELAY_MS;
+            g_ack_pending = 1;
+          }
         }
       #ifdef LICENSE_PLATE_BOARD
         else if (is_web_led)
@@ -1359,7 +1615,12 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  /* ⚠ 采样时间必须够长（2026-10-15 实测定案）：ADC_BAT 节点源阻抗 =
+     R7∥R8 = 100k∥220k ≈ 68.6 kΩ，采样电容充电 τ ≈ 0.55 µs。
+     1.5 周期 @ 4 MHz ADCCLK 只有 0.375 µs ⇒ 电容充不满 ⇒ 读数系统性偏低
+     ~30%（实测万用表 VBAT=3.96 V / 节点 2.72 V，固件只读出 1.86 V）。
+     239.5 周期 = 63 µs ≈ 114τ，充分充电；单次仍为阻塞 ~65 µs，无影响。 */
+  sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
