@@ -43,6 +43,8 @@
 </style>
 </head>
 <body>
+<style>.backbtn{position:fixed;top:12px;right:14px;z-index:999;background:#2563eb;color:#fff;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.22)}.backbtn:hover{opacity:.85}</style>
+<a class="backbtn" href="final-summary.html" title="返回最终总结">&#8592; 返回总结</a>
 <div class="wrap">
 
 <h1>电池电压 ADC 查询 —— 调试全记录</h1>
@@ -281,6 +283,40 @@ GPIOA-&gt;BRR  = GPIO_PIN_2;    /* PA2 = 0 → 关断，恢复 0 耗流 */</pre>
 <tr><td>ADC 采样时间</td><td class="mono">1.5 周期</td><td class="mono">239.5 周期</td><td>源阻抗 68.6 kΩ 高，采样电容需长充电</td></tr>
 <tr><td>合理性闸门</td><td class="mono">2500~3800 mV</td><td class="mono">2500~4600 mV</td><td>旧闸门把正确值 4171 当异常丢弃了</td></tr>
 </table>
+
+<h3>3.1 RC 时间常数到底是多少、旧注释错在哪</h3>
+<div class="card" style="border-color:#fbbf24;background:#fffbeb">
+<div class="mut"><b>旧注释原文</b>（git <code>7a52ac9:Core/Src/main.c</code>）：</div>
+<pre>② 等 ≥2 ms 让 R7(100k)+R8(220k) 与 C14(100nF) 的 RC 稳定
+   （τ = 100k ∥ 220k × 100n ≈ 6.9 µs，2 ms 余量足够）   ← 数字对、单位错</pre>
+<table>
+<tr><th style="width:150px">项目</th><th>旧注释（错）</th><th>正确</th></tr>
+<tr><td>源阻抗</td><td class="mono">100k∥220k</td><td class="mono">100k∥220k = 68.57 kΩ（写对了）</td></tr>
+<tr><td>电容</td><td class="mono">C14 = 100 nF</td><td class="mono">C14 = 100 nF（写对了）</td></tr>
+<tr><td><b>τ 单位</b></td><td class="mono" style="color:#b91c1c">6.9 <b>µs</b></td><td class="mono" style="color:#059669">6.86 <b>ms</b> （<b>差了 1000 倍</b>）</td></tr>
+<tr><td>「余量」判断</td><td class="mono" style="color:#b91c1c">2 ms 足够</td><td class="mono" style="color:#059669">2 ms 只有 0.29τ，远不够</td></tr>
+</table>
+<div class="warnbox">
+<b>为什么是 ms 不是 µs</b>：数量级自检 —— <span class="mono">kΩ × nF = 10³ Ω × 10⁻⁹ F = 10⁻⁶ s = µs</span>？<b>错！</b>
+再算一遍：<span class="mono">68.57×10³ × 100×10⁻⁹ = 68.57×100 × 10⁻⁶ = 6857×10⁻⁶ s = 6.857 ms</span>。<br>
+关键在 <b>系数</b>：<span class="mono">kΩ×nF</span> 得到的单位确实是 µs，但只是「<b>数值上 1 kΩ·nF = 1 µs</b>」这个速记本身要求电阻电容量级配套。<br>
+——<b>真正的坑不是量纲，是旧注释把 68.57×100 算成了「6.9」</b>：应得 <span class="mono">6857</span>（单位 µs）＝ <b>6.857 ms</b>，却被写成 <span class="mono">6.9</span> 又贴上 µs 标签，等于把结果整整缩小 1000 倍。
+</div>
+<div class="good"><b>一句话记牢</b>：<span class="mono">τ[ms] ≈ R[kΩ]·C[µF]</span>，或 <span class="mono">τ[µs] ≈ R[Ω]·C[µF]</span>。本电路 68.6 kΩ × 0.1 µF = <b>6.86 ms</b>。</div>
+</div>
+
+<h3>3.2 这个错误对最终结果影响多大（实测量化）</h3>
+<table>
+<tr><th>阶段</th><th>等待</th><th>占 τ 比例</th><th>节点充满度</th><th>实测 raw</th><th>实测节点电压</th></tr>
+<tr><td>旧版（极性已修正 / 3 ms）</td><td class="mono">3 ms</td><td class="mono">0.44 τ</td><td class="mono">35.4%</td><td class="mono">2728</td><td class="mono">2198 mV</td></tr>
+<tr><td>修复版（极性已修正 / 50 ms）</td><td class="mono">50 ms</td><td class="mono">7.27 τ</td><td class="mono">99.93%</td><td class="mono">2777</td><td class="mono">2237 mV</td></tr>
+<tr><td><b>差值</b></td><td colspan="3"></td><td class="mono"><b>+49 LSB</b></td><td class="mono"><b>+39.5 mV / +1.76%</b></td></tr>
+</table>
+<div class="warnbox">
+<b>为什么 3 ms 只充到 35% 却只差 1.8%？</b> —— 因为节点<b>不是从 0 起充</b>：上一次采样结束后 C14 上仍残留接近稳态的电荷，且 8 次连采间隔仅几百 µs，逐次把电容补一点 ⇒ 实际等效起始点很高。<br>
+⇒ <b>RC 等待不足，是三个缺陷里影响最小的一条</b>（约 ±1.8% / 40 mV）；真正的大头是 ① 基准假设 3.3 V（实为 4.17 V，−20%）和 ② PA2 极性反（支路切断，读到浮空残荷）。<br>
+但 50 ms ≈ 7.3τ 后误差 <span class="mono">e^-7.27 ≈ 0.07%</span>，属于「一劳永逸、不留隐患」的写法，代价仅 50 ms 阻塞。
+</div>
 
 <h3>4. 附带修掉的致命 bug</h3>
 <div class="bad"><b><code>main()</code> 从未调用 <code>MX_ADC1_Init()</code></b>（CubeMX 生成后漏接）⇒ <code>hadc1.Instance == NULL</code> ⇒ 首次采样时 <code>HAL_ADC_Start → ADC_Enable()</code> 去写 <code>NULL-&gt;CR2</code>（地址 0x24）⇒ <b>IMPRECISERR 总线错误（CFSR=0x00000400）→ HardFault 整板死机</b>。<br>
