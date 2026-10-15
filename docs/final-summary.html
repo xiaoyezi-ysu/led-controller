@@ -298,6 +298,7 @@
       <tr><td><a href="lpcycle-autocycle-test.html">lpcycle-autocycle-test</a></td><td>lp_cycle 自主唤醒循环实测：period_min=2 跑满 4 睡 3 醒零复位，睡段 0.215 mA；顺带揪出并修掉「第 2 轮必被看门狗误咬」的真 bug，附各档 period 续航账。</td></tr>
       <tr><td><a href="lpcycle-cycles-test.html">lpcycle-cycles-test</a></td><td>新增 lp_cycle <b>循环次数 cycles</b> 参数验证：period_min=1 + cycles=2 睡满 2 轮自动退出回常在线（SWD 读到 g_lp_cycle 1→0、MQTT 收到 lp_cycle_done），睡段 0.220 mA；INA228 与 F-11 两表互证。</td></tr>
       <tr><td><a href="yinerda-dtu-config.html">yinerda-dtu-config</a></td><td>银尔达 4G DTU（YED_DTU4/Air780EPM）资料整理：官方文档链接 + 全部 config 指令与 dtu.c 配置逐条对照 + 字段错位/lp/nettime 等实测坑定案。</td></tr>
+      <tr><td><a href="adc-battery-debug.html">adc-battery-debug</a></td><td><b>电池电压 ADC 调试全记录</b>：开头一张数据流图（下发→采样时序→还原→回执→硬件链），三个叠加缺陷（VDDA 基准假设 3.3V 实为 4.17V / PA2 极性写反 / RC 时间常数 6.9ms 误作 6.9µs）逐条定案；万用表 <b>66k 之谜</b>（在板测 R8 读到 R7∥R8 并联等效值）详解；调试短接 V33 为何让 raw 恒定 2815；附 MX_ADC1_Init 漏调导致的 HardFault 排查路径。修复后 mv=4093/adc_mv=2814/raw=3315/vdda=3477，端到端 PASS。</td></tr>
       <tr><td><a href="index.html">index</a></td><td>docs 全部报告的目录页。</td></tr>
     </table>
   </div>
