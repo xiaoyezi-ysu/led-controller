@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>电池低压保护 —— Stop 唤醒锁死定位与修复 · 车牌光伏</title>
+<style>
+  :root{--ink:#1e293b;--mut:#64748b;--line:#e2e8f0;--bg:#f8fafc;--card:#fff;--acc:#2563eb;--ok:#059669;--bad:#b91c1c;--warn:#b45309}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:var(--ink);background:var(--bg);line-height:1.7;padding:24px 16px}
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-size:22px}.sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+  h2{font-size:16px;margin:26px 0 10px;padding-left:10px;border-left:4px solid var(--acc)}
+  h3{font-size:14px;margin:16px 0 6px;color:#334155}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin-bottom:12px}
+  .kpis{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .kpi{flex:1;min-width:152px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+  .kpi .lab{font-size:11.5px;color:var(--mut)}
+  .kpi .val{font-size:20px;font-weight:700;color:var(--acc)}
+  .kpi .val small{font-size:12px;font-weight:400;color:var(--mut)}
+  .kpi.bad .val{color:var(--bad)}.kpi.ok .val{color:var(--ok)}
+  details{margin:8px 0;border:1px solid var(--line);border-radius:8px;background:#fbfdff}
+  summary{cursor:pointer;padding:8px 13px;font-size:13.5px;font-weight:600;color:var(--acc);user-select:none;list-style:none}
+  summary::before{content:"▸ ";font-size:12px}
+  details[open] summary::before{content:"▾ "}
+  details[open] summary{border-bottom:1px dashed var(--line)}
+  .dbody{padding:10px 13px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  .good{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
+  .bad{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
+  .warnbox{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 13px;font-size:13px;margin:8px 0}
+  .q{background:#f1f5f9;border-left:4px solid #2563eb;border-radius:6px;padding:10px 14px;margin:10px 0;font-size:13.5px}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.5px;font-family:Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:11px 14px;font-size:12px;overflow-x:auto;line-height:1.55;font-family:Consolas,monospace}
+  .mut{color:var(--mut);font-size:12.5px}
+  a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+  ol,ul{padding-left:20px;font-size:13.5px}li{margin:4px 0}
+  svg{max-width:100%;height:auto;display:block;margin:10px auto}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;font-weight:600}
+  .t-fix{background:#dcfce7;color:#166534}.t-open{background:#fee2e2;color:#991b1b}.t-tool{background:#dbeafe;color:#1e40af}
+  .mono{font-family:Consolas,monospace;font-size:12.5px}
+</style>
+</head>
+<body>
+<style>.backbtn{position:fixed;top:12px;right:14px;z-index:999;background:#2563eb;color:#fff;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.22)}.backbtn:hover{opacity:.85}</style>
+<a class="backbtn" href="final-summary.html" title="返回最终总结">&#8592; 返回总结</a>
+<div class="wrap">
+
+<h1>电池低压保护 —— Stop 唤醒锁死定位与修复</h1>
+<div class="sub">车牌光伏 ver2 · 2026-10-15 · VBAT &lt; 3.0 V 自动进 Stop、回升 &gt; 3.3 V 回在线（迟滞 0.3 V）· 命令 <code>{"cmd":"batlp"}</code> / <code>!batlp</code> · 含 RTC 闹钟中断门禁的致命 bug 复盘</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="lab">进睡阈值</div><div class="val">3.00 <small>V</small></div><div class="mut">VBAT 低于此值进 Stop</div></div>
+  <div class="kpi"><div class="lab">恢复阈值</div><div class="val">3.30 <small>V</small></div><div class="mut">迟滞 0.3 V 防抖</div></div>
+  <div class="kpi"><div class="lab">睡眠轮询</div><div class="val">60 <small>s</small></div><div class="mut">RTC 闹钟定时复测</div></div>
+  <div class="kpi ok"><div class="lab">实机闭环</div><div class="val">PASS</div><div class="mut">2.63V 睡 / 3.85V 醒</div></div>
+</div>
+
+<div class="good"><b>一句话结论：</b>低压保护逻辑本身一次写对，但第一次上机就「睡下去再也醒不来」。根因不在业务代码，而在 <b>RTC 从 Stop 唤醒瞬间 <code>RSF=0</code>（APB1 与 RTC 核心未同步）</b>——此时写 <code>RTC-&gt;CRH</code> 的 <code>ALRIE</code> 位会被硬件静默丢弃，下一发闹钟不再产生中断，板子便永久锁死在 Stop。修复 = 所有 RTC 寄存器访问前先等 <code>RSF=1</code>，并在唤醒路径上把中断门禁重开一次。</div>
+
+<h2>一、功能设计：三段式低压保护</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:170px">宏</th><th style="width:120px">值</th><th>语义</th></tr>
+    <tr><td class="mono">BAT_LP_ENTER_MV</td><td class="mono">3000u</td><td>在线检测：<code>g_bat_mv &lt; 3000</code> → 关 4G、挂 60 s 闹钟、置 <code>s_bat_sleep=1</code>，主循环顶部 <code>WFI</code> 即进 Stop</td></tr>
+    <tr><td class="mono">BAT_LP_RESUME_MV</td><td class="mono">3300u</td><td>睡眠唤醒后复测：<code>g_bat_mv ≥ 3300</code> → 清 <code>s_bat_sleep</code>、重启 4G、回常在线</td></tr>
+    <tr><td class="mono">BAT_LP_POLL_S</td><td class="mono">60u</td><td>睡眠期间由 RTC 闹钟每 60 s 唤醒一次复测电池</td></tr>
+    <tr><td class="mono">BAT_LP_CHECK_MS</td><td class="mono">10000u</td><td>在线期间每 10 s 测一次 VBAT（不阻塞 4G 主循环）</td></tr>
+    <tr><td class="mono">BAT_BKP_DR</td><td class="mono">BKP-&gt;DR4</td><td>持久化禁用标志；<code>0x4F46</code> = 关闭低压保护（掉电保留）</td></tr>
+  </table>
+  <p class="mut" style="margin-top:8px">迟滞窗口 <b>3.0 V ~ 3.3 V</b>：进入后不会在阈值边缘反复抖动；只有明确回升过 3.3 V 才恢复在线。低电压下 ADC 分压链路（PA2 接通 → <code>HAL_Delay(50)</code> 等 RC 稳定 → 8 次取 (min+max)/2 → VREFINT 反算 VDDA）沿用先前已验证的实现。</p>
+</div>
+
+<h2>二、状态机：Stop 进出的完整闭环</h2>
+<div class="card">
+<svg viewBox="0 0 840 420" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>电池低压保护的在线/睡眠状态机与 RTC 唤醒路径</title>
+<desc>在线态每 10 秒测 VBAT，低于 3.0V 进 Stop 并挂 60 秒闹钟；闹钟唤醒后 RTC_APP_RearmIRQ 重开门禁，复测高过 3.3V 则恢复在线，否则继续睡。</desc>
+<defs>
+  <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<rect x="16" y="14" width="808" height="392" rx="16" fill="#f1f5f9" stroke="#cbd5e1"/>
+
+<!-- 在线态 -->
+<rect x="60" y="52" width="250" height="110" rx="12" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.6"/>
+<text x="185" y="80" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">在线态 s_bat_sleep=0</text>
+<text x="185" y="104" text-anchor="middle" font-size="12" fill="#334155">常在线 · 4G 在网</text>
+<text x="185" y="124" text-anchor="middle" font-size="12" fill="#334155">每 10 s 测 VBAT</text>
+<text x="185" y="144" text-anchor="middle" font-size="12" fill="#1e40af">（不阻塞主循环）</text>
+
+<!-- 睡眠态 -->
+<rect x="530" y="52" width="250" height="110" rx="12" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+<text x="655" y="80" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Stop 睡眠 s_bat_sleep=1</text>
+<text x="655" y="104" text-anchor="middle" font-size="12" fill="#334155">4G 断电 · WFI 进 Stop</text>
+<text x="655" y="124" text-anchor="middle" font-size="12" fill="#334155">RTC 闹钟 60 s 后唤醒</text>
+<text x="655" y="144" text-anchor="middle" font-size="12" fill="#991b1b">功耗 ≈ 0.22 mA</text>
+
+<!-- 进入箭头 -->
+<path d="M310 96 L524 96" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="417" y="86" text-anchor="middle" font-size="12" font-weight="600" fill="#b91c1c">VBAT &lt; 3.00 V</text>
+<text x="417" y="112" text-anchor="middle" font-size="11.5" fill="#64748b">关 4G → ArmIn(60s)</text>
+
+<!-- 恢复箭头 -->
+<path d="M530 140 L316 140" fill="none" stroke="#059669" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="423" y="160" text-anchor="middle" font-size="12" font-weight="600" fill="#047857">VBAT ≥ 3.30 V</text>
+<text x="423" y="178" text-anchor="middle" font-size="11.5" fill="#64748b">清 s_bat_sleep → 4G 重启</text>
+
+<!-- 自循环 -->
+<path d="M655 162 C655 220 780 220 780 162" fill="none" stroke="#b45309" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+<text x="742" y="212" text-anchor="middle" font-size="11.5" fill="#b45309">仍 &lt; 3.3 V</text>
+<text x="742" y="228" text-anchor="middle" font-size="11.5" fill="#b45309">重挂闹钟继续睡</text>
+
+<!-- 唤醒路径细节 -->
+<rect x="60" y="252" width="720" height="132" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="80" y="278" font-size="13" font-weight="700" fill="#0f172a">★ 唤醒路径（本次 bug 所在）：g_rtc_alarm_hit 被置起后主循环干的第一件事</text>
+<rect x="80" y="292" width="200" height="46" rx="8" fill="#fef3c7" stroke="#f59e0b"/>
+<text x="180" y="313" text-anchor="middle" font-size="12" font-weight="600" fill="#7c2d12">1. RTC_APP_RearmIRQ()</text>
+<text x="180" y="330" text-anchor="middle" font-size="11" fill="#92400e">等 RSF=1 → 重开 ALRIE</text>
+<rect x="320" y="292" width="200" height="46" rx="8" fill="#e0e7ff" stroke="#6366f1"/>
+<text x="420" y="313" text-anchor="middle" font-size="12" font-weight="600" fill="#312e81">2. 复测 VBAT</text>
+<text x="420" y="330" text-anchor="middle" font-size="11" fill="#4338ca">ADC 采样链路</text>
+<rect x="560" y="292" width="200" height="46" rx="8" fill="#dcfce7" stroke="#22c55e"/>
+<text x="660" y="313" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">3. 判决 → 恢复或续睡</text>
+<text x="660" y="330" text-anchor="middle" font-size="11" fill="#15803d">并为下一轮重挂闹钟</text>
+<path d="M280 315 L316 315" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M520 315 L556 315" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+</svg>
+</div>
+
+<h2>三、症状：睡下去，再也醒不来</h2>
+<div class="card">
+  <p>烧录后第一次实测，进睡条件满足得干干净净 —— 但睡眠之后板子像死了一样。用 OpenOCD 连上去读一组变量，得到三个<b>互相矛盾</b>的事实：</p>
+  <table>
+    <tr><th style="width:230px">观测量</th><th style="width:180px">反复读到的值</th><th>说明</th></tr>
+    <tr><td class="mono">g_rtc_alarm_hit</td><td class="mono" style="color:#b91c1c">恒 0</td><td>闹钟中断一次都没触发过</td></tr>
+    <tr><td class="mono">g_wdg_kick</td><td class="mono" style="color:#b91c1c">恒 12</td><td>看门狗喂狗计数不增长 ⇒ 主循环没在跑</td></tr>
+    <tr><td class="mono">uwTick</td><td class="mono" style="color:#b91c1c">冻结</td><td>SysTick 停 ⇒ 确实处于 Stop</td></tr>
+    <tr><td class="mono">RTC CNT</td><td class="mono" style="color:#047857">持续增长</td><td>RTC 照走 ⇒ 时钟源没问题（LSE/LSI 都活着）</td></tr>
+  </table>
+  <div class="bad"><b>矛盾点：</b>RTC 明明在走，闹钟也挂上了（ALR 值正确），可中断就是不发；中断不发 ⇒ 主循环永远停在 <code>WFI</code> ⇒ <code>uwTick</code> 冻结、喂狗停摆 ⇒ 死锁。这不是"睡太深"，是"醒不来"。</div>
+  <p class="mut">排查中先后排除了：时钟配置（CNT 在涨）、闹钟值（ALR 回读正确）、EXTI 线（IMR 已开）、NVIC 总开关。每一步都把嫌疑指向同一个地方 —— 中断使能位 <code>RTC-&gt;CRH.ALRIE</code> 到底有没有真的写进去。</p>
+</div>
+
+<h2>四、根因：RSF=0 时写 CRH 被硬件丢弃</h2>
+<div class="card">
+  <p>RM0008（STM32F1 参考手册）RTC 章节对 <code>CRL.RSF</code>（Registers Synchronized Flag）有明确约束：</p>
+  <div class="q">APB1 接口与 RTC 核心是<b>两个完全独立的时钟域</b>。RTC 核心在内核复位、睡眠、Stop 期间照常运行，而 APB1 总线接口会停摆。<code>RSF=1</code> 表示 APB1 已与 RTC 核心重新同步。<b>当 <code>RSF=0</code> 时：读 RTC 寄存器的值不可信，写 <code>CRH</code>/<code>CRL</code> 也无效。</b></div>
+  <p>从 Stop 唤醒的<b>最初一小段时间</b>里，APB1 刚刚上电、还没来得及和 RTC 核心同步，此刻 <code>RSF=0</code>。而我们的唤醒路径一进主循环就调用 <code>RTC_APP_ArmIn()</code> 重挂闹钟，其中包含 <code>RTC-&gt;CRH |= RTC_CRH_ALRIE</code> —— <b>这一位被硬件静默丢弃了</b>（不报错、不回读异常，就是没写进去）。于是：</p>
+  <ol>
+    <li>本轮的闹钟中断服务已执行完（<code>ALRIE</code> 被硬件在中断入口自动清掉）；</li>
+    <li>唤醒路径试图重开 <code>ALRIE</code>，因 <code>RSF=0</code> 失败；</li>
+    <li>下一发闹钟到点，<b>中断不产生</b> ⇒ 没有 <code>g_rtc_alarm_hit</code> ⇒ 主循环没被告知要醒；</li>
+    <li><code>WFI</code> 立刻再次进 Stop —— <b>永久锁死</b>。</li>
+  </ol>
+  <div class="warnbox"><b>为什么第一轮能进睡？</b>初始化阶段（<code>RTC_APP_Init</code>）跑在完整上电、时钟早已稳定的环境里，<code>RSF=1</code>，<code>ALRIE</code> 写得进去，所以第一次挂闹钟是成功的。问题只出在"从 Stop 醒来再写"这条路径上 —— 这也解释了为什么它<b>看起来像个偶发问题，实则必然发生</b>。</div>
+</div>
+
+<h2>五、修复：三处加固</h2>
+<div class="card">
+  <h3>① 统一入口 <code>rtc_wait_rsf()</code> —— 所有 RTC 操作前先等同步</h3>
+  <pre>static void rtc_wait_rsf(void)
+{
+  uint32_t guard = 0;
+  while (!(RTC->CRL & RTC_CRL_RSF))
+    if (++guard > 2000000u) break;   /* ≈250ms @8MHz，防呆 */
+}</pre>
+  <p class="mut">所有碰 RTC 寄存器的地方（Init / ArmIn / WakeArmed / RearmIRQ / 看门狗快照）都先调它。带 guard 计数是为了万一硬件异常也不至于卡死在 while。</p>
+
+  <h3>② 新增 <code>RTC_APP_RearmIRQ()</code> —— 唤醒路径第一件事</h3>
+  <pre>uint8_t RTC_APP_RearmIRQ(void)
+{
+  if (!s_rtc_ok) return 1u;
+  rtc_wait_rsf();                       /* ★ 先等 APB1 同步 */
+  RTC->CRH |= RTC_CRH_ALRIE;            /* 必须在 CNF=0 且 RSF=1 时写 */
+  EXTI->IMR |= RTC_EXTI_LINE;
+  NVIC_SetPriority(RTC_Alarm_IRQn, 2);
+  NVIC_EnableIRQ(RTC_Alarm_IRQn);
+  s_irq_gate_ok = (uint8_t)((RTC->CRH & RTC_CRH_ALRIE) &&
+                  (NVIC->ISER[1] & (1u << ((uint32_t)RTC_Alarm_IRQn - 32u))));
+  return s_irq_gate_ok ? 0u : 1u;
+}</pre>
+  <p class="mut">在 <code>main.c</code> 的 <code>if (g_rtc_alarm_hit)</code> 分支最前面调用。这样无论上次睡眠里发生了什么，醒来第一件事就是把中断门禁重开，锁死状态无法自持。</p>
+
+  <h3>③ <code>WakeArmed()</code> 加门禁校验 + <code>ArmIn()</code> 双重回读</h3>
+  <p><code>RTC_APP_WakeArmed()</code> 现在不只看"闹钟挂没挂"，还实际回读 <code>RTC-&gt;CRH.ALRIE</code> 和 <code>NVIC-&gt;ISER[1]</code> 的门禁位，两者缺一就返回 0（视为未武装）。<code>ArmIn()</code> 写完 <code>ALR</code> 后同样做第二道校验，失败则重试一次并置 <code>s_wake_armed=0</code>，让上层能感知异常而不是盲目进睡。</p>
+  <div class="good"><b>写 <code>CRH</code> 的关键约束（牢记）：</b>只有 <code>ALR</code>/<code>CNT</code>/<code>PRL</code> 需要先 <code>CNF=1</code> 进配置模式；<b><code>CRH</code>/<code>CRL</code> 不需要 CNF，而且 <code>CNF=1</code> 时反而写不进去</b>。它们只需要 <code>RSF=1</code>。早期的实现把 <code>CRH</code> 也包进了配置模式，是另一处隐患，已一并纠正。</div>
+</div>
+
+<h2>六、两个必须记住的踩坑（自省）</h2>
+<div class="card">
+  <details open>
+    <summary>坑一：RTC_CRH / CRL 的地址搞反了</summary>
+    <div class="dbody">
+      <p>排查中一度按错误的寄存器映射解读，把 <code>0x40002800</code> 当 <code>CRL</code>、<code>0x40002804</code> 当 <code>CRH</code>，导致 <code>ALRIE</code>/<code>SECIE</code>/<code>RSF</code> 的解读全错，多花了好几轮。</p>
+      <table>
+        <tr><th>寄存器</th><th>地址</th><th>本次实测值</th><th>解读</th></tr>
+        <tr><td class="mono">RTC_CRH</td><td class="mono">0x40002800</td><td class="mono">0x0002</td><td><b>ALRIE=1</b>（闹钟中断使能）</td></tr>
+        <tr><td class="mono">RTC_CRL</td><td class="mono">0x40002804</td><td class="mono">0x0029</td><td>RSF=1（bit3）/ RTOFF=1（bit5）</td></tr>
+        <tr><td class="mono">RTC_PRLL</td><td class="mono">0x4000280C</td><td class="mono">32767</td><td>预分频低 16 位</td></tr>
+        <tr><td class="mono">RTC_CNTH/L</td><td class="mono">0x40002818/1C</td><td class="mono">—</td><td>秒计数（跨 Stop 唯一时标）</td></tr>
+        <tr><td class="mono">RTC_ALRH/L</td><td class="mono">0x40002820/24</td><td class="mono">—</td><td>闹钟值</td></tr>
+      </table>
+      <p class="mut">记忆口诀：<b>CRH 在低地址（0x…00）</b>，和 CNT/ALR 的顺序一致（H 在前）。每个寄存器占 32 位字、只有低 16 位有效。</p>
+    </div>
+  </details>
+  <details>
+    <summary>坑二：<code>RTC_Alarm_IRQn = 41</code> 落在 NVIC-&gt;ISER[1] 的 bit9</summary>
+    <div class="dbody">
+      <p>排查时只读了 <code>NVIC-&gt;ISER[0]</code>（0xE000E100）得到 0，便断言"闹钟中断没使能"，把方向带偏。实际上 Cortex-M 中 IRQ 32–63 位于 <code>ISER[1]</code>（<code>0xE000E104</code>），而：</p>
+      <ul>
+        <li><code>RTC_Alarm_IRQn = 41</code>（与 <code>EXTI15_10=40</code>、<code>USBWakeUp=42</code> 相邻，与 <code>startup_stm32f103xb.s</code> 中 <code>RTC_Alarm_IRQHandler</code> 的位置吻合）；</li>
+        <li>对应 <code>ISER[1]</code> 的 <code>bit(41-32)=bit9</code>；</li>
+        <li>实测 <code>NVIC-&gt;ISER[1] = 0x2A0</code>，bit9 = 1 ⇒ <b>中断其实一直是使能的</b>。</li>
+      </ul>
+      <div class="bad"><b>教训：</b>基于这个错误判断曾做了一处 <code>RTC_APP_EnableAlarmIRQ()</code> 修改，事后已<b>撤销还原</b>。真相是中断门禁没问题，问题在 <code>RSF=0</code> 时写 <code>CRH</code> 被丢弃 —— 二者表象相似（都是"ALRIE 没生效"），但根因完全不同。</div>
+      <p class="mut">另外提醒：<code>RTC_IRQn=3</code> 是秒中断，和闹钟中断是两个不同的 IRQ，别混用。</p>
+    </div>
+  </details>
+  <details>
+    <summary>坑三：Stop 态读外设寄存器会「整片返 0」，别当故障</summary>
+    <div class="dbody">
+      <p>进程 Stop 后，AHB/APB 外设时钟被停，用 SWD 读 <code>RTC_CRL</code>/<code>RTC_CRH</code>、<code>EXTI-&gt;IMR</code>、<code>NVIC-&gt;ISER</code> 会得到 <b>0</b> —— 这看起来像"寄存器被清零了/系统崩了"，其实只是总线停摆。只有 RTC 备份域部分还能读。</p>
+      <p class="mut"><b>正确判法：</b>判断板子是否在 Stop，看 <code>RCC_CR</code> 与 <code>uwTick</code> 是否冻结，或者 <code>halt</code> 后再重读一次寄存器。切勿据 Stop 态的单次读数下结论。</p>
+    </div>
+  </details>
+</div>
+
+<h2>七、实机闭环验证</h2>
+<div class="card">
+  <p>修复烧录后，用 DP100 数控电源代替电池接到 VBAT 节点，做了一次完整的"低 → 高"闭环：</p>
+  <table>
+    <tr><th style="width:130px">阶段</th><th style="width:150px">DP100 输出</th><th>固件观测</th><th style="width:70px">结果</th></tr>
+    <tr>
+      <td>进睡</td>
+      <td class="mono">2.63 V</td>
+      <td><code>s_bat_sleep=1</code>、<code>uwTick</code> 冻结、4G 断电（PA3 拉低）</td>
+      <td><span class="tag t-fix">PASS</span></td>
+    </tr>
+    <tr>
+      <td>睡眠轮询<br><span class="mut">（修复生效铁证）</span></td>
+      <td class="mono">保持 2.63 V</td>
+      <td>RTC CNT 越过 ALR(202) 后，<b>ALR 自动重挂到 263</b>；<code>uwTick</code> 由 0x27A8 → 0x27E3 恢复推进；<code>g_wdg_kick</code> 12 → 13</td>
+      <td><span class="tag t-fix">PASS</span></td>
+    </tr>
+    <tr>
+      <td>回升恢复</td>
+      <td class="mono">3.8 V</td>
+      <td><b><code>s_bat_sleep</code> 1 → 0</b>；<code>uwTick</code> 867 → 18567 持续递增；<code>g_bat_mv = 3853 mV</code>；RTC CNT 跳变 <code>0x6AD0</code>（nettime 授时生效）</td>
+      <td><span class="tag t-fix">PASS</span></td>
+    </tr>
+  </table>
+  <div class="good"><b>闭环成立：</b>低压进睡 ✅ → 睡眠期 RTC 定时唤醒复测（<b>唤醒闹钟能自动重挂，正是 RSF 修复直接生效的证据</b>）✅ → 电压回升自动恢复在线并重启 4G ✅。整个链路上没有任何人工干预，全部由固件自己完成。</div>
+  <p class="mut">DP100 实测节点电压 2.74 V 时固件读到 2.633 V，差约 4%，与 ADC 分压折算的已知精度（±5%）相符，属正常范围，未做额外校准。</p>
+</div>
+
+<h2>八、交付与验证清单</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:210px">项</th><th>状态</th></tr>
+    <tr><td>固件源码（<code>rtc_app.c/.h</code>、<code>main.c</code>）</td><td><span class="tag t-fix">已改</span> 编译通过，RAM 4704 B / FLASH 51788 B，无新增警告</td></tr>
+    <tr><td>HEX 生成 + 烧录</td><td><span class="tag t-fix">已烧</span> 手动 objcopy 核对 mtime，继电器硬复位后 OpenOCD 烧录 <code>Programming Finished</code> + <code>Verified OK</code></td></tr>
+    <tr><td>实机功能闭环</td><td><span class="tag t-fix">PASS</span> 见第七节三阶段</td></tr>
+    <tr><td>代码提交</td><td><span class="tag t-fix">已提交</span> commit <code>974eb23</code>，并经 GitHub Contents API 推送，远程/本地逐字节 MATCH</td></tr>
+    <tr><td>命令接口</td><td>MQTT <code>{"cmd":"batlp","action":"on|off|status"}</code>；串口 <code>!batlp [on|off|status]</code></td></tr>
+    <tr><td>持久化禁用</td><td><code>BKP-&gt;DR4 = 0x4F46</code>，掉电保留；恢复用 <code>!batlp on</code> 清标志</td></tr>
+  </table>
+</div>
+
+<h2>九、Q &amp; A</h2>
+<div class="card">
+  <details open>
+    <summary>Q1：为什么"进睡"没问题，"醒来"才出问题？</summary>
+    <div class="dbody">
+      进睡路径在正常运行的上下文中执行，时钟早已稳定、<code>RSF=1</code>，写 <code>ALRIE</code> 成功。真正第一次写 <code>ALRIE</code> 是在 <code>RTC_APP_Init()</code>（完整上电后），也成功。只有"从 Stop 唤醒后立刻重写"这一条路径会遇到 <code>RSF=0</code> 的窗口。所以问题必然发生，却只在睡眠之后暴露。
+    </div>
+  </details>
+  <details>
+    <summary>Q2：为什么不干脆在唤醒后加个固定延时，等 RSF 自己变 1？</summary>
+    <div class="dbody">
+      可以，但不严谨。RSF 的出现时机与 APB1 上电、分频配置有关，固定延时要么不够（仍丢写）、要么过长（浪费电流预算）。轮询 <code>RSF</code> 位是 RM0008 推荐的正确做法，也把"到底等多久"交给硬件自己说了算，还带 guard 防卡死。
+    </div>
+  </details>
+  <details>
+    <summary>Q3：低压保护会跟 lp_cycle（2h 自动低功耗）打架吗？</summary>
+    <div class="dbody">
+      不会。<code>main.c</code> 里在线检测块的门禁是 <code>if (s_batlp_en &amp;&amp; !g_lp_cycle &amp;&amp; !s_bat_sleep)</code> —— 处于 <code>lp_cycle</code> 流程中时不再叠加低压检测；而 <code>s_bat_sleep</code> 会并入 <code>want_stop</code>，两者共用同一套 Stop 退出、时钟恢复逻辑。恢复路径里 <code>SystemClock_Config()</code> 依然是必须的（Stop 退出后 SYSCLK 回落 HSI，不重配则 UART 波特率全错）。
+    </div>
+  </details>
+  <details>
+    <summary>Q4：这个 bug 会不会在别的 Stop 唤醒场景里也埋着？</summary>
+    <div class="dbody">
+      会 —— 凡是在"从 Stop 醒来"的路径上直接写 <code>RTC-&gt;CRH</code>/<code>CRL</code> 的代码都有同样风险。本次把等待同步收敛到统一的 <code>rtc_wait_rsf()</code>，并让 <code>wakeup</code> 一定先走 <code>RTC_APP_RearmIRQ()</code>，等于在所有可能路径上打了同一道补丁。后续新增 RTC 相关代码，只要坚持"先 <code>rtc_wait_rsf()</code> 再读写"，就不会重犯。
+    </div>
+  </details>
+</div>
+
+<p class="mut" style="margin:26px 0 6px">相关报告：<a href="adc-battery-debug.html">电池电压 ADC 调试全记录</a> · <a href="lpcycle-power-time-verify.html">lp_cycle 功耗与时间验证</a> · <a href="stop-1p03mA-rootcause.html">Stop 1.03 mA 根因</a> · <a href="final-summary.html">返回最终总结</a></p>
+
+</div>
+</body>
+</html>
