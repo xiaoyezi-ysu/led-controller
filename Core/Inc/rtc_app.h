@@ -31,8 +31,18 @@ uint8_t  RTC_APP_Ready(void);
 uint8_t  RTC_APP_ArmIn(uint32_t delay_s);
 
 /* 唤醒源是否已武装（ArmIn 成功后为 1，闹钟触发后清零）。
- * ⚠ 进 Stop 前必须为 1，否则睡下无人能唤醒 = 变砖。 */
+ * ⚠ 进 Stop 前必须为 1，否则睡下无人能唤醒 = 变砖。
+ * ⚠ 2026-10-15 起本函数还会检查 IRQ 门禁（CRH.ALRIE + NVIC.ISER1 bit9）：
+ *   门禁缺失时返回 0，主循环据此拒绝进 Stop。 */
 uint8_t  RTC_APP_WakeArmed(void);
+
+/* ★ 2026-10-15 新增：从 Stop 唤醒后重开闹钟中断门禁。
+ * 唤醒瞬间 RSF=0，CRH/NVIC 的写入会被丢弃（实测导致低压保护"睡下醒不来"）；
+ * 本函数等 RSF=1 后重写 CRH.ALRIE + EXTI17 + NVIC。0=就位，1=失败。 */
+uint8_t  RTC_APP_RearmIRQ(void);
+
+/* IRQ 门禁自检结果（RTC_APP_Init 里算好，SWD/日志可查） */
+uint8_t  RTC_APP_IRQGateOK(void);
 
 /* 对表：把计数器写成绝对 epoch 秒。0=成功。 */
 uint8_t  RTC_APP_SetEpoch(uint32_t epoch);
