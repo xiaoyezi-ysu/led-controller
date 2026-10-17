@@ -150,7 +150,7 @@ static uint8_t  g_ack_pending = 0;
 #define LP_SESSION_MS    90000u   /* 每个会话最长在线时长 */
 #define LP_REPORT_AT_MS  45000u   /* 会话内上报时刻（MQTT 通常已连上） */
 /* ★ 2026-10-15：上电默认周期 = 2 h（生产形态）。指令 period_min 可覆盖。 */
-#define LP_DEFAULT_PERIOD_S  7200u   /* 2 h */
+#define LP_DEFAULT_PERIOD_S  600u    /* 调试期 10 min（量产改回 7200u=2h） */
 /* ★ 上电自动进低功耗循环的状态机参数（见 AUTO_LP_* 说明） */
 #define AUTO_LP_BOOT_MS      15000u  /* 上电后先在线 15s：等 4G/MQTT 起来、留 PC 逃生窗口 */
 #define AUTO_BKP_DR          BKP->DR3  /* VBAT 域持久标志：0x4F46=自动低功耗被禁用 */
@@ -170,9 +170,10 @@ static uint8_t  g_ack_pending = 0;
 #define BAT_LP_RESUME_MV     3300u   /* VBAT > 3.30 V → 回在线（迟滞 0.3 V） */
 #define BAT_LP_POLL_S        60u     /* 睡下后每 60s 醒一次复测 */
 #define BAT_LP_CHECK_MS      10000u  /* 在线期每 10s 测一次电池 */
-#define BAT_BKP_DR           BKP->DR4  /* VBAT 域：0x4F46=低压保护被禁用 */
+#define BAT_BKP_DR           BKP->DR4  /* VBAT 域：0x4F4F=低压保护显式开启 */
 #define BAT_BKP_OFF_MAGIC    0x4F46u
-static uint8_t  s_batlp_en     = 1;   /* 1 = 低压保护使能（可被 BKP_DR4/命令关） */
+#define BAT_BKP_ON_MAGIC     0x4F4Fu
+static uint8_t  s_batlp_en     = 0;   /* 0 = 调试期默认关闭（!batlp on 显式开启，BKP 持久） */
 static uint8_t  s_bat_sleep    = 0;   /* 1 = 正因低压处于 Stop 睡眠态 */
 static uint32_t s_bat_last_ms  = 0;   /* 上次电池检测时刻 */
 static uint16_t s_bat_mv_last  = 0;   /* 最近一次 VBAT（SWD 可读） */
@@ -752,7 +753,7 @@ static void SEQ_HandleCmd(const char *line)
     while (*p == ' ') p++;
     if (strncmp(p, "on", 2) == 0)
     {
-      s_batlp_en = 1; BAT_BKP_DR = 0;
+      s_batlp_en = 1; BAT_BKP_DR = BAT_BKP_ON_MAGIC;
       printf("BAT-LP: ON (BKP_DR4 cleared) enter<%u mV resume>%u mV\r\n",
              (unsigned)BAT_LP_ENTER_MV, (unsigned)BAT_LP_RESUME_MV);
     }
@@ -1038,8 +1039,8 @@ int main(void)
     }
   }
 
-  /* ---- 电池低压保护开关：BKP_DR4 == 0x4F46 则禁用（持久，掉电不丢）---- */
-  s_batlp_en = (BAT_BKP_DR == BAT_BKP_OFF_MAGIC) ? 0u : 1u;
+  /* ---- 电池低压保护开关：默认关闭（调试期），BKP_DR4==0x4F4F 才开启（持久）---- */
+  s_batlp_en = (BAT_BKP_DR == BAT_BKP_ON_MAGIC) ? 1u : 0u;
   s_bat_last_ms = HAL_GetTick();   /* 首次检测延后 BAT_LP_CHECK_MS，让 4G 先起来 */
   printf("BAT-LP: %s (enter<%u mV, resume>%u mV, poll %us)\r\n",
          s_batlp_en ? "ON" : "OFF (BKP_DR4)",
