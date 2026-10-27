@@ -40,6 +40,7 @@
 <div class="wrap">
   <h1>车牌灯整板低功耗 · 最终汇报</h1>
   <div class="sub">2026-10-14 · 数据批次 20261013_2225（干净口径全套复测 55 min）· F-11 真值 + SEQ 工况引擎 + MQTT 旁听交叉验证</div>
+  <div class="sub" style="margin-top:-12px">专题入口：<a href="pv-overview.html"><b>光伏充电日志总览（10-19 ~ 10-26）</b></a> · <a href="pv-day-2026-10-26.html">10-26 光伏日收支</a> · <a href="light-2026-10-26.html">10-26 光照</a> · <a href="mqtt-outage-2026-10-26.html">MQTT 断流复盘</a></div>
 
   <div class="kpis">
     <div class="kpi"><div class="lab">Stop 睡态（真值）</div><div class="val">0.226 <small>mA</small></div></div>
@@ -301,6 +302,10 @@
       <tr><td><a href="adc-battery-debug.html">adc-battery-debug</a></td><td><b>电池电压 ADC 调试全记录</b>：开头一张数据流图（下发→采样时序→还原→回执→硬件链），三个叠加缺陷（VDDA 基准假设 3.3V 实为 4.17V / PA2 极性写反 / RC 时间常数 6.9ms 误作 6.9µs）逐条定案；万用表 <b>66k 之谜</b>（在板测 R8 读到 R7∥R8 并联等效值）详解；调试短接 V33 为何让 raw 恒定 2815；<b>五·补章 Q&amp;A</b>：为什么等效电阻是 R7∥R8、「电源置零（电压源短路）」只是数学操作而非真短接（理想电压源对 ΔV 即交流地）；附 MX_ADC1_Init 漏调导致的 HardFault 排查路径。修复后 mv=4093/adc_mv=2814/raw=3315/vdda=3477，端到端 PASS。</td></tr>
       <tr><td><a href="batlp-stop-wakeup.html">batlp-stop-wakeup</a></td><td><b>电池低压保护 —— Stop 唤醒锁死定位与修复</b>：VBAT&lt;3.0V 进 Stop、&gt;3.3V 回在线（迟滞 0.3V、RTC 60s 轮询）。从「睡下去再也醒不来」的三个矛盾证据（<code>g_rtc_alarm_hit</code> 恒 0 / <code>uwTick</code> 冻结 / RTC CNT 照涨）出发，定位到 <b>Stop 唤醒瞬间 <code>RSF=0</code> 时写 <code>RTC-&gt;CRH.ALRIE</code> 被硬件静默丢弃</b> ⇒ 下一发闹钟无中断 ⇒ 永久锁死。修复 = <code>rtc_wait_rsf()</code> + <code>RTC_APP_RearmIRQ()</code> + <code>WakeArmed()</code> 门禁校验；含两处踩坑自省（CRH 在低地址 <code>0x40002800</code>、<code>RTC_Alarm_IRQn=41</code> 落 <code>NVIC-&gt;ISER[1]</code> bit9）。实机闭环 PASS（2.63V 睡 / 60s 轮询重挂闹钟 / 3.85V 醒）。</td></tr>
       <tr><td><a href="mqtt-outage-2026-10-26.html">mqtt-outage-2026-10-26</a></td><td><b>MQTT 断流 11 小时 37 分的复盘</b>：旁听端「线程 alive 但计数不动」被误读为板子失联，实为<b>端口级间歇封锁</b>——同一 IP 的 443 全程 TCP+TLS 正常，1883/8883/8083/8084 全丢包；换出口 IP（代理）仍不通，但<b>物联网卡模组连 emqx 直接 ssta=4</b> ⇒ emqx 健康、IP 未封、板子上报一直是好的。含时间线、端口矩阵、判决实验、两个候选机制（链路端口过滤 vs emqx 反滥用拉黑）与「每 30 s 硬撞 1300 次」的自触发嫌疑。</td></tr>
+      <tr><td><a href="pv-overview.html">pv-overview</a></td><td><b>光伏充电日志总览（10-19 ~ 10-26）</b>：逐日光伏发电 / 整板消耗 / 电池净收支 / 光照剂量四张表 + 照度归一与面积归一的硅 vs 钙钛矿对比；每一行都能点进当天的 <code>pv-day-*</code> 与 <code>light-*</code> 原始分析。</td></tr>
+      <tr><td><a href="pv-day-2026-10-26.html">pv-day-2026-10-26</a></td><td>10-26 单块钙钛矿（49 cm²）阴天全天：光伏 95.68 mAh、整板 53.31 mAh、电池净 +42.37 mAh（利用率 55.7%），17:08 弱光涓流时照度仅 1049 lx。</td></tr>
+      <tr><td><a href="light-2026-10-26.html">light-2026-10-26</a></td><td>10-26 环境光照记录：BH1750 全天有效（中位 3979 lx、峰 9806 lx），阴天弱光日 VEML 峰仅 3082 lx，26555 帧无缺口。</td></tr>
+      <tr><td><a href="overview-2026-10-19.html">overview-2026-10-19</a></td><td>10-19 户外实测日总览：四块硅板那天的整机电流分解与分板消耗（历史口径，供光伏对比作基线）。</td></tr>
       <tr><td><a href="index.html">index</a></td><td>LED Controller 控制页（Pages 首页，MQTT 下行控制 + 实时状态）。</td></tr>
     </table>
   </div>
