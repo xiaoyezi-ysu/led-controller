@@ -1,0 +1,51 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FPC 天线 A/B 对照 · 2026-10-19</title><style>
+:root{color-scheme:dark;--bg:#0f1419;--card:#161c22;--fg:#e6edf3;--dim:#8b98a5;--grid:#2b3440;
+--acc:#58a6ff;--good:#3fb950;--warn:#d29922;--bad:#f85149;}
+body{margin:0;padding:24px;background:var(--bg);color:var(--fg);
+font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1000px;margin:0 auto}
+h1{font-size:21px}h2{font-size:16px;margin-top:26px;padding-bottom:6px;border-bottom:1px solid var(--grid)}
+table{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+th,td{border:1px solid var(--grid);padding:5px 9px;text-align:left}
+th{background:#1b2432}.n{text-align:right;font-variant-numeric:tabular-nums}
+.kpi{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0}
+.kpi div{flex:1 1 150px;background:var(--card);border:1px solid var(--grid);border-radius:8px;padding:10px 12px}
+.kpi b{font-size:20px;display:block;font-variant-numeric:tabular-nums}.kpi span{font-size:11.5px;color:var(--dim)}
+.card{background:var(--card);border:1px solid var(--grid);border-radius:8px;padding:10px 14px;margin:10px 0}
+.note{background:var(--card);border-left:3px solid var(--acc);padding:8px 12px;margin:10px 0;font-size:13px}
+.warn{border-left-color:var(--warn)}.good{border-left-color:var(--good)}.bad{border-left-color:var(--bad)}
+code{background:#1b2432;color:#9fd0ff;padding:1px 5px;border-radius:4px;font-size:12px}
+svg{max-width:100%;height:auto}
+.cap{font-size:13px;color:var(--dim);margin:4px 0}
+</style></head><body><div class="wrap">
+<h1>FPC 天线 A/B 对照（夜间工况）</h1>
+<div class="cap">数据源 <code>three_branch_225031.csv</code>（INA228 三通道，51.5 帧/分）+ 人工操作时刻 <code>antenna_ab_20261019.txt</code></div>
+<div class="cap">整板电流口径 <code>Iboard = -I1 + I3</code>（夜间 CH3≈0，即电池放电电流）；醒/睡判据 CH2 ≥ 1.0 mA；固件 600 s 周期、低压保护关。</div>
+<div class="kpi"><div><span>A 有天线 · 单轮会话电量</span><b>1.0756 mAh</b></div><div><span>B 拔天线 · 单轮会话电量</span><b>0.7788 mAh</b></div></div>
+<h2>1. 分段对比</h2><table><tr><th>相位</th><th class="n">会话数</th><th class="n">会话总时长 s</th><th class="n">会话电量 mAh</th><th class="n">会话均流 mA</th><th class="n">峰值 mA</th><th class="n">睡眠中位 mA</th><th class="n">睡眠 CH2 中位 mA</th></tr>
+<tr><td>A 有天线</td><td class="n">1</td><td class="n">94</td><td class="n">1.0756</td><td class="n">41.65</td><td class="n">69.3</td><td class="n">0.290</td><td class="n">0.200</td></tr>
+<tr><td>B 拔天线</td><td class="n">1</td><td class="n">93</td><td class="n">0.7788</td><td class="n">30.28</td><td class="n">47.8</td><td class="n">0.290</td><td class="n">0.190</td></tr>
+</table>
+<h2>2. 会话内三档（在线空闲 / 发射 / 入网浪涌）</h2><table><tr><th>相位</th><th>档位</th><th class="n">时长 s</th><th class="n">电量 mAh</th><th class="n">平均 mA</th><th class="n">中位 mA</th></tr>
+<tr><td>A 有天线</td><td>在线空闲 &lt;20 mA</td><td class="n">34</td><td class="n">0.1115</td><td class="n">11.99</td><td class="n">11.27</td></tr>
+<tr><td>A 有天线</td><td>发射 20~60 mA</td><td class="n">93</td><td class="n">1.2038</td><td class="n">47.27</td><td class="n">49.36</td></tr>
+<tr><td>A 有天线</td><td>入网浪涌 ≥60 mA</td><td class="n">2</td><td class="n">0.0408</td><td class="n">66.62</td><td class="n">66.62</td></tr>
+<tr><td>B 拔天线</td><td>在线空闲 &lt;20 mA</td><td class="n">42</td><td class="n">0.1520</td><td class="n">13.82</td><td class="n">13.69</td></tr>
+<tr><td>B 拔天线</td><td>发射 20~60 mA</td><td class="n">93</td><td class="n">0.8124</td><td class="n">31.62</td><td class="n">29.80</td></tr>
+<tr><td>B 拔天线</td><td>入网浪涌 ≥60 mA</td><td class="n">0</td><td class="n">0.0000</td><td class="n">0.00</td><td class="n">0.00</td></tr>
+</table>
+<div class="card"><svg viewBox="0 0 680 88" width="100%"><text x="0" y="14" font-size="12" fill="var(--fg)">单轮会话电量对比（mAh）</text><text x="122" y="37" font-size="12" fill="var(--fg)" text-anchor="end">A 有天线</text><rect x="130" y="22" width="460.0" height="26" fill="#58a6ff" rx="3"/><text x="598.0" y="39" font-size="12" fill="var(--dim)">1.076</text><text x="122" y="73" font-size="12" fill="var(--fg)" text-anchor="end">B 拔天线</text><rect x="130" y="58" width="333.1" height="26" fill="#d29922" rx="3"/><text x="471.1" y="75" font-size="12" fill="var(--dim)">0.779</text></svg></div>
+<div class="bad">拔天线后会话电量<b>变化 -27.6%</b>：A 1.0756 mAh/轮 vs B 0.7788 mAh/轮。</div>
+<div class="note">睡眠电流作为对照（应不受天线影响）：A 0.290 mA vs B 0.290 mA，差值 0.000 mA —— 这是本次测量的<b>噪声地板</b>，比它小的会话差异都不可信。</div>
+<h2>3. 逐会话明细</h2><table><tr><th>相位</th><th>起</th><th>止</th><th class="n">时长 s</th><th class="n">电量 mAh</th><th class="n">平均 mA</th><th class="n">峰值 mA</th></tr>
+<tr><td>A 有天线</td><td>22:56:09</td><td>22:57:42</td><td class="n">94</td><td class="n">1.0756</td><td class="n">41.65</td><td class="n">69.3</td></tr>
+<tr><td>B 拔天线</td><td>23:07:44</td><td>23:09:17</td><td class="n">93</td><td class="n">0.7788</td><td class="n">30.28</td><td class="n">47.8</td></tr>
+</table>
+<h2>4. 操作时刻</h2><table><tr><th>时刻</th><th>动作</th><th>备注</th></tr>
+<tr><td>22:50:31</td><td>REC-START</td><td>三通道记录启动（INA228，~1.15 s/帧）</td></tr>
+<tr><td>22:50:40</td><td>ON</td><td>A 段开始：FPC 天线保持接上（板子原始状态）</td></tr>
+<tr><td>23:04:40</td><td>OFF</td><td>B 段开始：拔掉 FPC 天线（用户实际拔除时刻）</td></tr>
+</table>
+</div></body></html>
