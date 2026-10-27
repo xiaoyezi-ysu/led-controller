@@ -2,10 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="color-scheme" content="only light">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>低功耗路线图 —— 从 22.5 mA 到 1.16 mA</title>
+<title>低功耗路线图 —— 从 22.5 mA 到 0.20 mA</title>
 <style>
-  :root{
+  :root{color-scheme:only light;
     --bg:#f6f7f9; --card:#ffffff; --line:#e5e7eb; --ink:#1f2328; --mut:#6b7280;
     --red:#d9534f; --blue:#2563eb; --green:#16a34a; --amber:#d97706; --purple:#7c3aed; --cyan:#0891b2;
   }
@@ -58,25 +59,60 @@
   .g4arrow .s{font-weight:700;font-size:14px;color:var(--ink)}
   .g4arrow .m{font-size:12px;color:var(--mut);margin:2px 0}
   .g4arrow .dl{font-size:17px;font-weight:800;color:var(--green)}
+
+  /* 折叠：每一步的详细操作 */
+  details.det{margin-top:7px}
+  details.det>summary{cursor:pointer;list-style:none;display:inline-block;user-select:none;
+        font-size:12px;color:var(--blue);background:#eff6ff;border:1px solid #c7d7f8;
+        border-radius:999px;padding:1px 10px}
+  details.det>summary::-webkit-details-marker{display:none}
+  details.det>summary::before{content:"▸";margin-right:5px;font-size:10px}
+  details.det[open]>summary::before{content:"▾"}
+  details.det[open]>summary{margin-bottom:8px}
+  details.det .body{background:#f9fafb;border:1px solid var(--line);border-radius:8px;
+        padding:10px 14px 10px 10px;font-size:13px;line-height:1.6}
+  details.det .body ol{margin:0;padding-left:20px}
+  details.det .body li{margin:3px 0}
+
+  /* 步骤整体折叠 */
+  details.step{border:1px solid var(--line);border-radius:10px;background:#fff;margin:10px 0}
+  details.step>summary{cursor:pointer;list-style:none;display:grid;gap:12px;align-items:center;
+      grid-template-columns:minmax(150px,1.1fr) 1.2fr 1fr 18px;padding:12px 16px}
+  details.step>summary::-webkit-details-marker{display:none}
+  details.step>summary:hover{background:#f9fafb;border-radius:10px}
+  details.step .sname b{font-size:14.5px}
+  details.step .sname small{display:block;color:var(--mut);font-weight:400;font-size:11.5px}
+  details.step .sval,.step .sdel{font-variant-numeric:tabular-nums;font-size:13.5px}
+  details.step .sdel{color:var(--green);font-weight:700;text-align:right}
+  details.step .chev{color:var(--mut);font-size:12px;text-align:right;transition:transform .15s}
+  details.step[open] .chev{transform:rotate(90deg)}
+  details.step .sbody{border-top:1px dashed var(--line);padding:12px 18px 14px;
+      display:grid;grid-template-columns:1.3fr 1fr;gap:20px;font-size:13px;line-height:1.6}
+  details.step .slab{font-size:11.5px;color:var(--mut);letter-spacing:.4px;margin:0 0 5px;font-weight:600}
+  details.step .scol ol{margin:0;padding-left:20px}
+  details.step .scol li{margin:3px 0}
+  details.step .scol p{margin:0 0 10px}
+  details.step .scol p:last-child{margin-bottom:0}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <h1>低功耗路线图 —— 从 22.5 mA 到 <span style="color:var(--green)">1.16 mA</span></h1>
-  <div class="sub">2026-10-13 · 车牌 ver2 · STM32F103C8T6 · 每步方法 / 达到的电流 / 踩过的坑 ·
-    配套文档：<code>low-power-1mA-plan.md</code>（§9–§14 详细记录）</div>
+  <h1>低功耗路线图 —— 从 22.5 mA 到 <span style="color:var(--green)">0.20 mA</span></h1>
+  <div class="sub">2026-10-13 初版 / <b>2026-10-20 续篇</b> · 车牌 ver2 · STM32F103C8T6 · 每步方法 / 达到的电流 / 踩过的坑 ·
+    配套文档：<code>low-power-1mA-plan.md</code>（§9–§14 详细记录）·
+    <b>第 1~4 节 = 固件 v1（1.16 mA）</b>，<b>第 5~6 节 = 固件 v2→v3 续篇（0.20 mA）</b></div>
 
   <div class="kpis">
     <div class="kpi warn"><div class="lab">起点 · 72 MHz Run</div><div class="val">≈22.5 <small>mA</small></div></div>
-    <div class="kpi good"><div class="lab">终点 · 8 MHz Stop + 拆 R24</div><div class="val">1.162 <small>mA</small></div></div>
-    <div class="kpi blue"><div class="lab">累计降幅</div><div class="val">≈95 <small>%</small></div></div>
-    <div class="kpi warn"><div class="lab">距 1 mA 目标</div><div class="val">+0.16 <small>mA</small></div></div>
+    <div class="kpi blue"><div class="lab">10-13 · 8 MHz + 拆 R24</div><div class="val">1.162 <small>mA</small></div></div>
+    <div class="kpi good"><div class="lab">10-20 · 固件 v3 睡态</div><div class="val">0.207 <small>mA</small></div></div>
+    <div class="kpi good"><div class="lab">累计降幅（vs 起点）</div><div class="val">≈99 <small>%</small></div></div>
   </div>
 
   <h2>1. 主链流程图（MCU 侧，全程 4G 断电 · LED 全灭）</h2>
   <div class="card flow">
-    <svg viewBox="0 0 960 632" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI','Microsoft YaHei',sans-serif">
+    <svg viewBox="0 0 960 668" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI','Microsoft YaHei',sans-serif">
       <defs>
         <marker id="arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
@@ -150,11 +186,12 @@
       <text x="912" y="484" font-size="12" fill="#6b7280" text-anchor="end">Stop → 新低</text>
 
       <!-- ══ 目标节点 S3 ══ -->
-      <rect x="30" y="524" width="360" height="96" rx="12" fill="#ecfdf5" stroke="#34d399" stroke-width="1.5"/>
-      <text x="50" y="552" font-size="14.5" font-weight="700" fill="#15803d">🎯 ④ 后 · 8 MHz Stop + 拆 R24</text>
-      <text x="50" y="575" font-size="12.5" fill="#6b7280">4G 断电 · LED 全灭 · 读数极稳（1.162/1.163/1.164/1.162）</text>
-      <text x="370" y="572" font-size="26" font-weight="800" fill="#16a34a" text-anchor="end">1.162 mA</text>
-      <text x="370" y="598" font-size="11.5" fill="#15803d" text-anchor="end">F-11 真值 · 1 mA 量级达成 ✅</text>
+      <rect x="30" y="524" width="360" height="124" rx="12" fill="#ecfdf5" stroke="#34d399" stroke-width="1.5"/>
+      <text x="50" y="550" font-size="14.5" font-weight="700" fill="#15803d">🎯 ④ 后 · 8 MHz Stop + 拆 R24</text>
+      <text x="50" y="572" font-size="12.5" fill="#6b7280">4G 断电 · LED 全灭 · 读数极稳（1.162/1.163/1.164/1.162）</text>
+      <text x="370" y="602" font-size="26" font-weight="800" fill="#16a34a" text-anchor="end">1.162 mA</text>
+      <text x="370" y="622" font-size="11.5" fill="#15803d" text-anchor="end">F-11 真值 · 1 mA 量级达成 ✅</text>
+      <text x="50" y="642" font-size="10.5" fill="#d97706">⚠ 此档实为 Sleep（SLEEPDEEP 被主循环每圈清掉），并非真 Stop —— 真 Stop 见第 5 节 0.226 mA</text>
     </svg>
   </div>
 
@@ -276,9 +313,239 @@
     </table>
   </div>
 
+  <h2>5. 续篇 · 怎么从 1.16 mA 走到 <span style="color:var(--green)">0.20 mA</span>（三步，第一刀是「假 Stop」）</h2>
+  <div class="card flow">
+    <svg viewBox="0 0 960 356" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI','Microsoft YaHei',sans-serif">
+      <defs>
+        <marker id="ar2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+          <path d="M0,0 L8,4.5 L0,9 z" fill="var(--green)"/>
+        </marker>
+      </defs>
+      <text x="26" y="24" font-size="12" fill="var(--mut)">旧读数 · 10-13</text>
+      <text x="262" y="24" font-size="12" fill="var(--green)">真 Stop · 10-19</text>
+      <text x="498" y="24" font-size="12" fill="var(--blue)">固件 v2 · 10-20</text>
+      <text x="734" y="24" font-size="12" fill="var(--blue)">固件 v3 · 10-20</text>
+
+      <rect x="26" y="40" width="200" height="90" rx="10" fill="#fff7ed" stroke="var(--amber)" stroke-width="2"/>
+      <text x="126" y="61" font-size="11.5" fill="var(--amber)" text-anchor="middle">标着「Stop」，实为 Sleep</text>
+      <text x="126" y="88" font-size="21" font-weight="700" fill="var(--amber)" text-anchor="middle">1.162 mA</text>
+      <text x="126" y="108" font-size="11" fill="var(--ink)" text-anchor="middle">8 MHz 内核仍在跑</text>
+      <text x="126" y="123" font-size="10.5" fill="var(--mut)" text-anchor="middle">WFI 只停下取指</text>
+
+      <line x1="226" y1="85" x2="256" y2="85" stroke="var(--green)" stroke-width="1.8" marker-end="url(#ar2)"/>
+
+      <rect x="262" y="40" width="200" height="90" rx="10" fill="#ecfdf5" stroke="var(--green)" stroke-width="2"/>
+      <text x="362" y="61" font-size="11.5" fill="var(--mut)" text-anchor="middle">SLEEPDEEP 不再被重写</text>
+      <text x="362" y="88" font-size="21" font-weight="700" fill="var(--green)" text-anchor="middle">0.270 mA</text>
+      <text x="362" y="108" font-size="11" fill="var(--ink)" text-anchor="middle">1.8V 域全停（真 Stop）</text>
+      <text x="362" y="123" font-size="10.5" fill="var(--mut)" text-anchor="middle">只剩 LSE+RTC · F-11 真值 0.226</text>
+
+      <line x1="462" y1="85" x2="492" y2="85" stroke="var(--green)" stroke-width="1.8" marker-end="url(#ar2)"/>
+
+      <rect x="498" y="40" width="200" height="90" rx="10" fill="#ecfdf5" stroke="var(--green)" stroke-width="2"/>
+      <text x="598" y="61" font-size="11.5" fill="var(--mut)" text-anchor="middle">PA9/PA10 切模拟输入</text>
+      <text x="598" y="88" font-size="21" font-weight="700" fill="var(--green)" text-anchor="middle">0.200 mA</text>
+      <text x="598" y="108" font-size="11" fill="var(--ink)" text-anchor="middle">消除 UART 回灌</text>
+      <text x="598" y="123" font-size="10.5" fill="var(--mut)" text-anchor="middle">往断电 4G 模组 RX 脚</text>
+
+      <line x1="698" y1="85" x2="728" y2="85" stroke="var(--green)" stroke-width="1.8" marker-end="url(#ar2)"/>
+
+      <rect x="734" y="40" width="200" height="90" rx="10" fill="#ecfdf5" stroke="var(--green)" stroke-width="2"/>
+      <text x="834" y="61" font-size="11.5" fill="var(--mut)" text-anchor="middle">SC7 power-down + LPDS</text>
+      <text x="834" y="88" font-size="21" font-weight="700" fill="var(--green)" text-anchor="middle">0.19~0.21 mA</text>
+      <text x="834" y="108" font-size="11" fill="var(--ink)" text-anchor="middle">整板实测（CH1 中位）</text>
+      <text x="834" y="123" font-size="10.5" fill="var(--mut)" text-anchor="middle">−0.207 / 最低 −0.215</text>
+
+      <rect x="206" y="140" width="76" height="24" rx="12" fill="#ecfdf5" stroke="#a7f3d0"/>
+      <text x="244" y="157" font-size="11.5" font-weight="700" fill="var(--green)" text-anchor="middle">−0.94 mA</text>
+      <rect x="442" y="140" width="76" height="24" rx="12" fill="#ecfdf5" stroke="#a7f3d0"/>
+      <text x="480" y="157" font-size="11.5" font-weight="700" fill="var(--green)" text-anchor="middle">−70 µA</text>
+      <text x="26" y="178" font-size="10.5" fill="var(--mut)">注：节点 2 = INA 改前基线 0.270（A/B 起点），F-11 同状态真值 0.226；−0.94 为 F-11 同表、−70 为 INA 同表，各自自洽。</text>
+      <rect x="678" y="140" width="76" height="24" rx="12" fill="#fff7ed" stroke="#fed7aa"/>
+      <text x="716" y="157" font-size="11.5" font-weight="700" fill="var(--amber)" text-anchor="middle">−17 µA</text>
+
+      <line x1="26" y1="186" x2="934" y2="186" stroke="var(--line)" stroke-width="1"/>
+
+      <text x="26" y="210" font-size="12.5" font-weight="600" fill="var(--ink)">同一块板、同一固件的两种「低功耗」：Sleep 与 Stop 差一个数量级 —— 第一刀（−0.94 mA）就是从 Sleep 换成 Stop</text>
+
+      <rect x="26" y="222" width="420" height="78" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+      <text x="46" y="244" font-size="11.5" fill="var(--mut)">Sleep（SLEEPDEEP=0）· 旧「低功耗」实际停在这一层</text>
+      <text x="46" y="268" font-size="20" font-weight="700" fill="var(--red)">≈2.2 mA</text>
+      <text x="46" y="288" font-size="11" fill="var(--mut)">内核 / 总线时钟继续跑，WFI 只是停下取指，外设寄存器照常可读</text>
+
+      <line x1="452" y1="262" x2="506" y2="262" stroke="var(--amber)" stroke-width="2" marker-end="url(#ar2)"/>
+      <text x="479" y="252" font-size="12" font-weight="700" fill="var(--amber)" text-anchor="middle">≈10×</text>
+
+      <rect x="514" y="222" width="420" height="78" rx="10" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.5"/>
+      <text x="534" y="244" font-size="11.5" fill="var(--mut)">Stop（SLEEPDEEP=1）· 现在真正进入的状态</text>
+      <text x="534" y="268" font-size="20" font-weight="700" fill="var(--green)">0.226 mA</text>
+      <text x="534" y="288" font-size="11" fill="var(--mut)">1.8V 域全停，只留 LSE + RTC 闹钟；外设寄存器整片读 0</text>
+
+      <text x="26" y="324" font-size="11.5" fill="var(--mut)">口径：1.162 / 0.226 / 0.200 / 0.207 都是整板 CH1；同时刻 MCU 支路 CH2 = 0.220（改前）→ 0.14~0.17（改后）。4G 支路不走 LDO、无表，= 整板 − CH2，实测漂 0~0.07 mA。</text>
+      <text x="26" y="342" font-size="11.5" fill="var(--amber)">⚠ 归因：只有 ② 做过 A/B（−70 µA 可复现）；③ 的 −17 µA 是手册推算，被 4G 支路漂移（最大 70 µA）淹掉，切不出来。</text>
+    </svg>
+  </div>
+  <div class="card">
+    <div class="hl">
+      <b>口径先对齐。</b>第 1~4 节是 <b>ver2 硬件 + 10-13 那版固件</b>（下文称固件 v1）的路径；
+      本节加的是<b>固件版本</b> v1 → v2 → v3 的改动（同一块 ver2 板，没换板、没改 BOM）。
+      这几个数别混着比：<b>0.270 = 改前整板（CH1）</b>、<b>0.220 = 改前 MCU 支路（CH2）</b>、
+      <b>0.200 = 改后整板（CH1）</b>、<b>0.14~0.17 = 改后 MCU 支路（CH2）</b>。
+      整板与支路之间还差一条 4G 支路（不走 LDO，无表，靠 KCL 减出来，且会漂 0~0.07 mA）。
+    </div>
+    <div class="hl" style="margin-top:12px">
+      <b>⚠ 先纠一个旧结论：1.162 mA 那次「Stop」其实没真进 Stop（是 Sleep）。</b>
+      当时主循环每圈都会重写 <code>SCB_SCR</code>，<code>SLEEPDEEP</code> 被反复清掉，内核只进了 Sleep（<b>≈2.2 mA</b>）而非 Stop。
+      两者差<b>一个数量级</b>：Sleep 只是停下取指，内核/总线时钟照跑、外设寄存器照常可读；Stop 才把 1.8V 域全关，只剩 LSE + RTC 闹钟。
+      真实 Stop 要等 <code>lp_cycle</code> 由 RTC 闹钟驱动、让固件自己走完入睡流程才测得到 —— 那才是 <b>0.225 mA</b>。
+      正确的分解是：<code>3.47 →（关 LEDB2 1.09）→ 2.38（Run）→（Sleep→Stop 1.99）→ 0.225</code>。
+    </div>
+    <div style="margin-top:14px">
+
+    <details class="step">
+      <summary>
+        <span class="sname"><b>⑤ 真进 Stop</b><small>固件 v1 末</small></span>
+        <span class="sval">2.38 → <b>0.226 mA</b><br><small style="color:var(--mut)">F-11 中位 · 批次 20261013_2225</small></span>
+        <span class="sdel">−0.94 mA（Sleep→Stop）</span>
+        <span class="chev">▸</span>
+      </summary>
+      <div class="sbody">
+        <div class="scol">
+          <div class="slab">方法 / 操作</div>
+          <ol>
+            <li>主循环顶部删掉每圈对 <code>SCB_SCR</code> 的重写；只有 <code>lp_cycle</code> 决定入睡时才置 <code>SCB_SCR |= 0x04</code>（SLEEPDEEP）。</li>
+            <li>进 Stop 前过门禁 <code>RTC_APP_WakeArmed()</code>：同时校验 ALR 回读 + <code>CRH.ALRIE</code> + <code>NVIC-&gt;ISER[1] bit9</code>（<code>RTC_Alarm_IRQn = 41</code>），缺一拒绝下睡。</li>
+            <li>测之前先把 <code>DBGMCU_CR(0xE0042004)</code> 清 0 —— OpenOCD 每次 <code>init</code> 会写 <code>0x307</code>，睡态虚增 0.82 mA。</li>
+            <li>WFI 入睡 → RTC 闹钟唤醒 → <code>HAL_ResumeTick()</code> + <code>SystemClock_Config()</code>（Stop 退出后 SYSCLK 回落 HSI，不重配则波特率全错）。</li>
+            <li>判据：AHB/APB 外设寄存器<b>整片读 0</b> 才是真 Stop 指纹，<code>uwTick</code> 冻结；Sleep 下寄存器照常可读 —— 这就是当初误判的根源。</li>
+          </ol>
+        </div>
+        <div class="scol">
+          <div class="slab">省下</div>
+          <p>1.162 → 0.226（Sleep→Stop）= <b style="color:var(--green)">−0.94 mA</b>；若从 Run 2.38 算起 = −2.15 mA</p>
+          <div class="slab">风险 / 回滚</div>
+          <p>Stop 退出后 SYSCLK 回落 HSI，<b>唤醒必须重跑 <code>SystemClock_Config()</code></b>，否则波特率全错、4G 失联</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="step">
+      <summary>
+        <span class="sname"><b>⑥ UART 引脚切模拟</b><small>固件 v2</small></span>
+        <span class="sval">整板 0.270 → <b>0.200 mA</b><br><small style="color:var(--mut)">CH1 中位 · 10-20 凌晨</small></span>
+        <span class="sdel">−70 µA<br><small>唯一做过 A/B 实测</small></span>
+        <span class="chev">▸</span>
+      </summary>
+      <div class="sbody">
+        <div class="scol">
+          <div class="slab">方法 / 操作</div>
+          <ol>
+            <li>新增 <code>UART4G_PinsToAnalog()</code>：<code>PA9(TX1)</code> / <code>PA10(RX1)</code> / <code>PB3</code> / <code>PB4</code> 设为 <code>GPIO_MODE_ANALOG</code>（输入缓冲关断、输出级断开）。</li>
+            <li>三个进 Stop 入口都要调，位置在 <code>V4G_Set(0)</code> 之后：<code>LP_CloseAndSleepEx()</code>、<code>SEQK_SLEEP</code>、batlp 电池低压分支。</li>
+            <li>唤醒侧四个出口恢复 <code>UART4G_PinsRestore()</code>：PA9 → <code>AF_PP</code>、PA10 → <code>INPUT_PULLUP</code>（与 CubeMX USART1 初始化一致）。</li>
+            <li>唯一不恢复的是 batlp「继续睡」分支 —— 继续睡就该保持模拟输入，代码里专门标了注释。</li>
+            <li>验证：整板 0.270 → 0.200 mA，反复复位可复现。</li>
+          </ol>
+        </div>
+        <div class="scol">
+          <div class="slab">原理</div>
+          <p>消除 3.3V 空闲高电平经模组 RX 脚 ESD 二极管往 V4G 轨的回灌。</p>
+          <div class="slab">风险 / 回滚</div>
+          <p>漏一个恢复出口 = 唤醒后 4G 连不上；batlp「继续睡」分支<b>故意不恢复</b>（继续睡就该保持模拟输入）</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="step">
+      <summary>
+        <span class="sname"><b>⑦ SC7A20H power-down</b><small>固件 v3a</small></span>
+        <span class="sval">6~11 → <b>0.5 µA</b><br><small style="color:var(--mut)">数据手册推算，未单独 A/B</small></span>
+        <span class="sdel">−~8 µA</span>
+        <span class="chev">▸</span>
+      </summary>
+      <div class="sbody">
+        <div class="scol">
+          <div class="slab">方法 / 操作</div>
+          <ol>
+            <li><code>SC7A20H_PowerDown()</code>：<code>CTRL_REG1(0x20)</code> 写 <code>0x00</code>，ODR=0000 → power-down ~0.5 µA。</li>
+            <li><code>SC7A20H_WakeUp()</code>：写回 <code>0x47</code>（50 Hz、低功耗模式、三轴使能）。</li>
+            <li>只在 <code>g_sc7_id == 0x11</code> 时执行（芯片不在就跳过），I2C 写失败静默无省电、不影响功能。</li>
+            <li>调用点同 UART：三个入睡入口各一次；唤醒恢复走统一出口。</li>
+          </ol>
+        </div>
+        <div class="scol">
+          <div class="slab">风险 / 回滚</div>
+          <p>I2C 写失败就静默无省电，无功能风险；唤醒漏写回则无加速度中断</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="step">
+      <summary>
+        <span class="sname"><b>⑧ Stop 期 LPDS</b><small>固件 v3b</small></span>
+        <span class="sval">14 → <b>~5 µA</b><br><small style="color:var(--mut)">F103 手册 typ，未单独 A/B</small></span>
+        <span class="sdel">−~9 µA</span>
+        <span class="chev">▸</span>
+      </summary>
+      <div class="sbody">
+        <div class="scol">
+          <div class="slab">方法 / 操作</div>
+          <ol>
+            <li><code>PWR-&gt;CR |= PWR_CR_LPDS</code>，放在 <code>RTC_APP_Init()</code> 里一次设好（PWR 时钟随 BKP 一起已开）。</li>
+            <li>Run / Sleep 不受影响，只有 Stop 生效 —— 代价是唤醒多几 µs，RTC 闹钟场景完全无感。</li>
+            <li>手册 typ：Stop 电流 14 → ~5 µA；因 4G 支路漂移比它还大，实测里切不出来，只能算「量级相符」。</li>
+          </ol>
+        </div>
+        <div class="scol">
+          <div class="slab">风险 / 回滚</div>
+          <p>零风险（只是内部稳压器换低功耗档）</p>
+        </div>
+      </div>
+    </details>
+
+    <div class="ok" style="margin-top:12px">
+      <b>合计 · v1 → v3：</b>①~④ + ⑤~⑧ 全部落地后，实测整板睡态 <b>0.19 ~ 0.21 mA</b>（CH1 中位 −0.207 / 最低 −0.215）。
+      省下：<b style="color:var(--green)">−70 µA 已证实</b>（⑥），SC7+LPDS 理论再 −17 µA。
+      ⑥ 之外的归因只能到「量级相符」：4G 支路本身漂 0~70 µA，比 SC7+LPDS 合计还大，分辨不出来。
+    </div>
+  </div>
+  </div>
+
+  <h2>6. 还剩多少空间：理论地板 vs 实测</h2>
+  <div class="card">
+    <div class="kpis" style="margin-top:0">
+      <div class="kpi good"><div class="lab">理论地板（原理图逐项累加）</div><div class="val">25 ~ 30 <small>µA</small></div></div>
+      <div class="kpi warn"><div class="lab">现实可达（含 4G 支路漏电）</div><div class="val">≈80 <small>µA</small></div></div>
+      <div class="kpi blue"><div class="lab">当前实测整板</div><div class="val">0.19 ~ 0.21 <small>mA</small></div></div>
+      <div class="kpi warn"><div class="lab">距 100 µA 目标</div><div class="val">≈0.1 <small>mA</small></div></div>
+    </div>
+    <table style="margin-top:14px">
+      <thead><tr><th>支路 / 器件</th><th>睡眠态路径</th><th class="num">理论电流</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td>U6 DW03-TD</td><td>电池保护 IC 静态</td><td class="num">3 µA typ / 6 max</td><td><span class="tag ok">已计入</span></td></tr>
+        <tr><td>U8 CN3142</td><td>无输入时 BAT 脚反灌，芯片自带防反灌</td><td class="num">≤1 µA</td><td><span class="tag ok">已计入</span></td></tr>
+        <tr><td>U4 ME6206A33XG</td><td>LDO 静态电流 Iq</td><td class="num">4 µA typ</td><td><span class="tag ok">已计入</span></td></tr>
+        <tr><td>U3 STM32F103C8T6</td><td>Stop + RTC/LSE 运行（LPDS 后）</td><td class="num">~19 µA</td><td><span class="tag q">LSE 成本待验</span></td></tr>
+        <tr><td>U1 SC7A20H</td><td>power-down（v3a 后）</td><td class="num">0.5 µA</td><td><span class="tag ok">已计入</span></td></tr>
+        <tr><td>PMOS-Q2 AO3401A</td><td>关断 IDSS</td><td class="num">≤1 µA</td><td><span class="tag ok">已计入</span></td></tr>
+        <tr><td>4G 模组（断电态）</td><td>V4G=0 后的输入漏电</td><td class="num">实测 0~70 µA（会漂）</td><td><span class="tag no">有状态，非恒定</span></td></tr>
+        <tr><td>电池 ADC 分压</td><td>PA2=0 时 Q1 关断，仅采样 50 ms/次</td><td class="num">平均 ≈0.01 µA</td><td><span class="tag ok">设计正确</span></td></tr>
+      </tbody>
+    </table>
+    <div class="hl" style="margin-top:14px">
+      <b>已被排除的嫌疑：</b>DAP/SWD 调试线（悬空 SWDIO 后 CH2 纹丝不动）、I2C 上拉 R5/R6（4.7 kΩ，真拉低会是 700 µA/线）、
+      PMOS 栅极网络 R57/R60/R61（关断态栅=源，无直流通路）。<br>
+      <b>剩余主嫌疑收窄到 LSE 晶振 / RTC 的真实成本</b>（F103 用坏晶体或驱动过强时 Stop 电流飙到 100+ µA 是常见病）。
+      验证方法：做一版测试固件——LSE on 但不挂闹钟直接睡（A）vs 跳过 RTC init（B），差值即 LSE 真实成本。
+      <b>⚠ 不要</b>再用「SWD 直接清 <code>BDCR.LSEON</code>」这条路：会让固件 RTC 初始化路径 HardFault（9.35 mA 死循环），必须 SWD halt → <code>PWR_CR|=DBP</code> → <code>BDCR|=0x101</code> 才能救回。
+    </div>
+  </div>
+
   <p style="color:var(--mut);font-size:12.5px;margin-top:26px">
     数据来源：AFU F-11（<code>COM4</code>，38400 8N1，协议 <code>电流µA,电压mV</code>）·
-    MKLink 探针 <code>usb-6bee5de2ad9b32857ecc1695</code> · 本图纯 SVG / CSS，无外部依赖，可离线打开。
+    MKLink 探针 <code>usb-6bee5de2ad9b32857ecc1695</code> · 本图纯 SVG / CSS，无外部依赖，可离线打开。<br>
+    第 5~6 节（2026-10-20 续）：INA228 三通道（<code>COM3</code>，38400，R=0.1 Ω，≈1 Hz）——
+    CH1 = 电池总路（负=放电）、CH2 = ME6206 LDO 支路（3V3 域）、CH3 = 光伏支路（INA226，1 LSB≈20 µA 底噪，夜间读数不作数）。
   </p>
 
 </div>
