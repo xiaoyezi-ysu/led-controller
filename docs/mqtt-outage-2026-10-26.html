@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MQTT 断流 11 小时 37 分 —— 「板子失联」到底是谁的锅（2026-10-26 复盘）</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1e2430; --mut:#6b7280; --line:#e5e8ef;
+    --green:#16a34a; --red:#dc2626; --blue:#2563eb; --purple:#7c3aed; --amber:#d97706;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 4vw;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.65}
+  h1{font-size:24px;margin:0 0 6px;letter-spacing:.2px}
+  h2{font-size:18px;margin:34px 0 12px;border-left:4px solid var(--blue);padding-left:11px}
+  h3{font-size:15px;margin:18px 0 8px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0 4px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .lab{font-size:12px;color:var(--mut)}
+  .kpi .val{font-size:21px;font-weight:700;margin-top:3px}
+  .kpi .val small{font-size:12.5px;font-weight:400;color:var(--mut)}
+  .good{border-left:4px solid var(--green);background:#f0fdf4;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .bad{border-left:4px solid var(--red);background:#fef2f2;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .hl{border-left:4px solid var(--amber);background:#fffbeb;border-radius:8px;padding:12px 15px;margin:11px 0}
+  .info{border-left:4px solid var(--blue);background:#eff6ff;border-radius:8px;padding:12px 15px;margin:11px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9}
+  td.num{font-variant-numeric:tabular-nums;text-align:right}
+  .ok{color:var(--green);font-weight:600}
+  .no{color:var(--red);font-weight:600}
+  .warn{color:var(--amber);font-weight:600}
+  code{background:#eef2ff;border-radius:4px;padding:1px 5px;font-size:12.6px;
+       font-family:"Cascadia Code",Consolas,monospace}
+  pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.6px;line-height:1.55}
+  .mut{color:var(--mut);font-size:12.5px}
+  svg{max-width:100%;height:auto}
+  ul{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  .quote{background:#f8fafc;border:1px dashed var(--line);border-radius:8px;padding:11px 14px;margin:10px 0;font-size:13px}
+</style>
+</head>
+<body>
+<style>.backbtn{position:fixed;top:12px;right:14px;z-index:999;background:#2563eb;color:#fff;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.22)}.backbtn:hover{opacity:.85}</style>
+<a class="backbtn" href="final-summary.html" title="返回报告索引">&#8592; 返回报告索引</a>
+
+<h1>MQTT 断流 11 小时 37 分：一场「板子失联」的复盘</h1>
+<div class="sub">2026-10-26 · 车牌 ver2 · 银尔达 YED_DTU4 @ broker.emqx.io · 证据来自 mqtt_watch 旁听日志、INA228 电流指纹、串口端口实测与蜂窝网模组对照实验</div>
+
+<h2>0. 一句话结论</h2>
+<div class="card">
+  <div class="kpis">
+    <div class="kpi"><div class="lab">静默时长</div><div class="val" style="color:var(--red)">11 h 37 min<small>　03:15:03 → 14:52</small></div></div>
+    <div class="kpi"><div class="lab">被封的对象</div><div class="val">4 个 MQTT 端口<small>　1883/8883/8083/8084</small></div></div>
+    <div class="kpi"><div class="lab">同一 IP 的 443</div><div class="val" style="color:var(--green)">全程正常</div></div>
+    <div class="kpi"><div class="lab">板子/模组/流量</div><div class="val" style="color:var(--green)">全部健康</div></div>
+  </div>
+  <div class="good"><b>没有任何硬件或固件故障。</b>板子从凌晨到下午一直在按周期正常上报，只是「电脑这一端的网络」收不到 broker 的推送。<b>封的是端口，不是 IP，也不是 emqx 服务本身。</b></div>
+</div>
+
+<h2>1. 时间线：从「以为板子死了」到「其实是端口被封」</h2>
+<div class="card">
+  <svg viewBox="0 0 900 250" width="100%" role="img" aria-label="10-26 事件时间线">
+    <defs>
+      <linearGradient id="blk" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#fecaca"/><stop offset="100%" stop-color="#fee2e2"/>
+      </linearGradient>
+    </defs>
+    <!-- 轴 -->
+    <line x1="70" y1="150" x2="860" y2="150" stroke="#cbd5e1" stroke-width="2"/>
+    <g font-family="-apple-system,Segoe UI,Microsoft YaHei" font-size="11" fill="#6b7280">
+      <text x="70" y="172">00:00</text><text x="190" y="172">03:00</text><text x="322" y="172">06:00</text>
+      <text x="454" y="172">09:00</text><text x="586" y="172">12:00</text><text x="718" y="172">15:00</text>
+    </g>
+    <!-- 封锁区间 03:15 -> 14:52，映射：00:00=x70, 每小时=44px -->
+    <rect x="213" y="120" width="511" height="30" fill="url(#blk)" stroke="#f87171" stroke-width="1.2" rx="3"/>
+    <text x="468" y="140" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">MQTT 端口全部丢包（11 h 37 min）</text>
+    <!-- 正常区间 -->
+    <rect x="70" y="120" width="143" height="30" fill="#dcfce7" stroke="#4ade80" stroke-width="1.2" rx="3"/>
+    <text x="141" y="140" font-size="11" fill="#15803d" text-anchor="middle">正常</text>
+    <rect x="724" y="120" width="136" height="30" fill="#dcfce7" stroke="#4ade80" stroke-width="1.2" rx="3"/>
+    <text x="792" y="140" font-size="11" fill="#15803d" text-anchor="middle">正常</text>
+
+    <!-- 事件竖线与标签（交替上下） -->
+    <g font-family="-apple-system,Segoe UI,Microsoft YaHei" font-size="11">
+      <line x1="213" y1="110" x2="213" y2="150" stroke="#dc2626" stroke-width="1.5"/>
+      <text x="213" y="102" fill="#dc2626" text-anchor="middle" font-weight="700">03:15 最后一条消息</text>
+
+      <line x1="238" y1="120" x2="238" y2="84" stroke="#94a3b8"/>
+      <text x="238" y="78" fill="#475569" text-anchor="middle">03:20 watcher 断开</text>
+
+      <line x1="450" y1="120" x2="450" y2="84" stroke="#94a3b8"/>
+      <text x="450" y="78" fill="#475569" text-anchor="middle">08:38 发现「卡住」</text>
+
+      <line x1="470" y1="150" x2="470" y2="196" stroke="#94a3b8"/>
+      <text x="470" y="210" fill="#475569" text-anchor="middle">09:00 继电器重启 · 09:50 实测端口全超时</text>
+
+      <line x1="660" y1="150" x2="660" y2="196" stroke="#94a3b8"/>
+      <text x="660" y="210" fill="#475569" text-anchor="middle">14:45 蜂窝模组换 broker 验证通路</text>
+
+      <line x1="724" y1="110" x2="724" y2="150" stroke="#16a34a" stroke-width="1.5"/>
+      <text x="724" y="102" fill="#15803d" text-anchor="middle" font-weight="700">14:52 消息回流</text>
+    </g>
+  </svg>
+  <div class="mut">封锁是「全封 → 全通」的二值切换：03:15 一刀切掉，14:52 一刀切回；恢复后连接延迟立刻回到 0.2 s（正常国际链路水平），中间不是高延迟或部分丢包。</div>
+</div>
+
+<h2>2. 现象：看起来像板子坏了</h2>
+<div class="card">
+  <ul>
+    <li>旁听程序 <code>mqtt_watch</code> 的心跳行显示 <b>「已收 823 条，最后一条 N 秒前」</b>，N 一路涨到 25000+，计数一动不动；</li>
+    <li>线程状态一直是 <code>alive</code>，进程没死、日志还在写；</li>
+    <li>手机用 4G 打开 GitHub Pages 上的灯控页（<code>wss://broker.emqx.io:8084/mqtt</code>）也连不上；</li>
+    <li>板子当天凌晨起一直待在室内，固件没改过，流量余量 5.7 / 30 MB 充足。</li>
+  </ul>
+  <div class="hl"><b>误判陷阱：</b>「线程 alive + 计数不动」极容易被读成「板子不发消息了」。实际上这两个量都与 broker 连接无关——<code>alive</code> 只说明 Python 线程还在跑，计数只在真正收到消息时才 +1。观测端一旦断链，它就会安静地聋下去，任何一侧的活动都体现不出来。</div>
+</div>
+
+<h2>3. 排查：把三条路都走一遍</h2>
+<div class="card">
+  <h3>3.1 端口矩阵（同一 IP，不同端口）</h3>
+  <table>
+    <tr><th>端口</th><th>用途</th><th>09:50 ~ 14:20（封锁期）</th><th>15:09（恢复后）</th></tr>
+    <tr><td class="num">1883</td><td>MQTT 明文</td><td class="no">6 s 超时</td><td class="num"><span class="ok">0.29 s</span></td></tr>
+    <tr><td class="num">8883</td><td>MQTT over TLS</td><td class="no">超时</td><td class="num"><span class="ok">0.22 s</span></td></tr>
+    <tr><td class="num">8083</td><td>MQTT over WS</td><td class="no">超时</td><td class="num"><span class="ok">0.21 s</span></td></tr>
+    <tr><td class="num">8084</td><td>MQTT over WSS（网页用）</td><td class="no">超时 / TLS 握手失败</td><td class="num"><span class="ok">0.21 s + TLS OK</span></td></tr>
+    <tr><td class="num">443</td><td>HTTPS</td><td class="ok">TCP + TLS 握手均成功</td><td class="num"><span class="ok">0.27 s + TLS OK</span></td></tr>
+  </table>
+  <div class="info"><b>关键判据：</b>443 在同一时刻能完成 TCP + TLS 握手，而 MQTT 各端口 6 秒超时 —— 说明<b>这个 IP 完全可达</b>，被拦的是<b>端口</b>，不是机器、不是 DNS、不是证书。</div>
+
+  <h3>3.2 换出口 IP 再试（排除「只是我家宽的问题」）</h3>
+  <table>
+    <tr><th>路径</th><th>结果</th><th>能证明什么</th></tr>
+    <tr><td>家宽直连 1883</td><td class="no">超时</td><td>—</td></tr>
+    <tr><td>代理（HTTP CONNECT 隧道）→ 1883</td><td class="warn">隧道 200 建立，但 MQTT CONNECT 无 CONNACK，60 s 后被 keepalive 踢</td><td>换出口 IP 仍不通 ⇒ 不只是本地单点问题</td></tr>
+    <tr><td>代理 → WSS 8084</td><td class="no">TLS 握手超时</td><td>同上</td></tr>
+    <tr><td>手机 4G → 网页 wss:8084</td><td class="no">连不上</td><td>消费级 SIM 同样受影响</td></tr>
+    <tr><td><b>蜂窝物联网卡（COM17 银尔达模组）→ 1883</b></td><td class="ok"><b>ssta=4 在线，netstatus=1</b></td><td><b>emqx 服务健康，物联网卡通道不封 MQTT 端口</b></td></tr>
+  </table>
+  <div class="good"><b>判决实验（最关键的一条）：</b>把一只物联网卡的银尔达 DTU 配到 <code>broker.emqx.io:1883</code>，45 秒后回读 <code>config,ssta,ok,4</code>（= MQTT 在线）。既然蜂窝网能连上，就说明 <b>emqx 没挂、IP 没被封、只是消费级网络把 MQTT 端口拦了</b>——而车牌板走的正是物联网卡这条路。</div>
+</div>
+
+<h2>4. 板子这一侧的证据：它一直活着</h2>
+<div class="card">
+  <table>
+    <tr><th>证据</th><th>读数</th><th>判读</th></tr>
+    <tr><td>电流指纹（INA228，上电后）</td><td>两个 14 s 突发、间隔 218 s</td><td>两次手动上电的开机窗口，形状正常</td></tr>
+    <tr><td>2 小时基线（10-25 夜）</td><td>11 个事件，每个 ~80 s，间隔 ~695 s</td><td>4G 会话节奏规整，CH1/CH2 秒级同步 884/884</td></tr>
+    <tr><td>恢复后首条 report（14:53）</td><td><code>mv=4117</code>、<code>rtc=1792997613</code></td><td>电池 4.12 V；RTC 换算正好 14:53:33 ⇒ 授时正常</td></tr>
+    <tr><td>同一条 report 的其它字段</td><td><code>sc7_ok=1</code>、<code>csr=201326592</code>、<code>rst_wdg=0</code></td><td>姿态传感器在位、复位原因无新异常、看门狗未咬</td></tr>
+    <tr><td>恢复后消息量</td><td>14:52~14:54 收到 75 条（计数 823 → 898）</td><td>会话完整回放，含 15 s 心跳与探活透传噪声</td></tr>
+  </table>
+  <div class="mut">注：报告里看到的 <code>+++</code>、<code>AT+ENTM</code> 被当数据发到上行主题，是探活时的透传回显噪声，网页端与 watcher 已过滤，不是故障。</div>
+</div>
+
+<h2>5. 到底是谁封的？两个候选机制</h2>
+<div class="card">
+  <table>
+    <tr><th>候选</th><th>支持证据</th><th>不符之处</th></tr>
+    <tr>
+      <td><b>① 链路/运营商端口级过滤</b><br><span class="mut">动态生效、动态解除</span></td>
+      <td>只封 MQTT 端口、443 白名单放行；蜂窝物联网卡不受影响，消费级 SIM/家宽同样中招</td>
+      <td>缺少运营商侧证据，无法直接证实</td>
+    </tr>
+    <tr>
+      <td><b>② emqx 公共 broker 的反滥用拉黑</b><br><span class="mut">按源 IP 临时封禁</span></td>
+      <td>公共 broker 被滥用严重，通常只封 MQTT 端口、放行 443；封禁时长（十余小时）与临时封禁常见量级吻合</td>
+      <td>同一出口经代理仍不通（代理出口是机房 IP，理论上不该与家宽同罪）</td>
+    </tr>
+  </table>
+  <div class="hl"><b>诚实的结论：</b>从客户端侧无法把两者区分开——两种机制的症状完全一致（只封 MQTT 端口、二值切换、十余小时）。但「443 通 / MQTT 端口死」这个组合足以排除「IP 被封」「emqx 挂了」「DNS 或证书问题」。</div>
+
+  <h3>5.1 一个可能的自触发因素</h3>
+  <div class="bad">旁听脚本用的是 paho 的 <code>reconnect_delay_set(min_delay=1, max_delay=30)</code>：连接失败时从 1 s 起翻倍、封顶 30 s，也就是<b>每 30 秒硬撞一次</b>。11 小时 37 分 ≈ <b>1300 次</b>连接尝试，全部来自同一个 IP。公共 broker 的滥用防护很容易被这种模式触发——封锁解除后它立刻重连成功，也符合「临时封禁到期」的表现。</div>
+  <p class="mut">建议：把 <code>max_delay</code> 提到 300 s（5 分钟一封顶），失败时温和退避；恢复后仍能自动接回，但不会把 IP 撞进黑名单。</p>
+</div>
+
+<h2>6. 处置建议</h2>
+<div class="card">
+  <table>
+    <tr><th>目标</th><th>做法</th><th>备注</th></tr>
+    <tr><td>只想让板子上报</td><td>什么都不用改</td><td>物联网卡 + emqx 这条链路实测 <code>ssta=4</code>，稳定</td></tr>
+    <tr><td>电脑端要不间断旁听</td><td>重连退避放宽到 5 分钟；断链时明确告警「观测端失明」，不要静默</td><td>避免把「收不到」误读成「板子没发」</td></tr>
+    <tr><td>手机上看网页</td><td>仅在家宽恢复期可用；消费级 SIM 被封时只能走代理</td><td>网页走 wss:8084，与 1883 同属被封端口组</td></tr>
+    <tr><td>要冗余通道</td><td>备选 broker：<code>mqttgo.io</code>（61.70.174.84，家宽 3 次通 1 次）、<code>broker.hivemq.com</code>（0.2 s 稳定）</td><td>换 broker 需改模组 <code>config,set,mqtt</code> 长指令 + 网页 <code>BROKER</code> 常量</td></tr>
+    <tr><td>现场取数</td><td>INA228 记录仪独立落卡，与网络完全无关</td><td>本次户外测试的电流/充电量数据一点没丢</td></tr>
+  </table>
+</div>
+
+<h2>7. 复现命令</h2>
+<div class="card">
+<pre># 1) 端口 + TLS 探测（判「IP 可达 / 端口被封」）
+python - &lt;&lt;'PY'
+import socket, ssl
+for p in (1883, 8883, 8083, 8084, 443):
+    s = socket.socket(); s.settimeout(6)
+    try:
+        s.connect(("broker.emqx.io", p)); print(p, "TCP OK")
+        if p in (443, 8084):
+            ctx = ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
+            ctx.wrap_socket(s, server_hostname="broker.emqx.io"); print(p, "TLS OK")
+    except Exception as e:
+        print(p, "FAIL", type(e).__name__)
+    finally: s.close()
+PY
+
+# 2) 蜂窝侧判决：把物联网卡 DTU 指向 emqx，回读 ssta（4 = MQTT 在线）
+config,set,paramsrc,1                                   # 必发，否则配置不生效
+config,set,mqtt,1,uart,120,broker.emqx.io,1883,<ID>,,,1,0,0,0,0,<SUB>,<PUB>,0,0,0,0,0,0,0,0,0
+config,set,save
+# 45 s 后：+++ → config,get,ssta → 期望 config,ssta,ok,4 → AT+ENTM
+
+# 3) 板子还活着的旁证：恢复后 report 的 rtc 字段应等于真实时间
+grep "cmd=report" bench/data/mqtt_live.log | tail -1</pre>
+</div>
+
+<div class="mut" style="margin-top:26px">
+  数据来源：<code>bench/data/mqtt_live.log</code>（旁听日志）、<code>bench/data/mqtt_all.csv</code>（消息汇总）、
+  INA228 三通道记录（<code>.workbuddy/tmp/ina_*.csv</code>）、COM17 银尔达 DTU 串口回读。
+  报告生成于 2026-10-26 15:12。
+</div>
+
+</body>
+</html>
