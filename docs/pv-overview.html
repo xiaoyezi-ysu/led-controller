@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>光伏充电总览 · 2026-10-19 ~ 10-26</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--tx:#e6edf3;--dim:#8b949e;--good:#3fb950;--bad:#f85149;--acc:#58a6ff;--warn:#d29922}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.65 "Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:1020px;margin:0 auto;padding:28px 18px 60px}
+h1{font-size:24px;margin:0 0 4px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:22px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;margin-bottom:18px}
+h2{font-size:16px;margin:0 0 12px;color:var(--acc)}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--bd);text-align:right;white-space:nowrap}
+th{color:var(--dim);font-weight:600}
+th:first-child,td:first-child{text-align:left}
+td:first-child{font-weight:600}
+th.desc,td.desc{white-space:normal;text-align:left;line-height:1.55}
+td.desc small{white-space:normal}
+table.wrapall th,table.wrapall td{white-space:normal;text-align:left}
+.pos{color:var(--good);font-weight:700}
+.neg{color:var(--bad);font-weight:700}
+a{color:var(--acc);text-decoration:none}
+a:hover{text-decoration:underline}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--bd);color:var(--dim);margin-left:6px;vertical-align:1px}
+.tag.pvk{border-color:#bc8cff;color:#bc8cff}
+.tag.part{border-color:var(--warn);color:var(--warn)}
+.tag.err{border-color:var(--bad);color:var(--bad)}
+.daycards{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px}
+.daycard{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:13px 15px}
+.daycard:hover{border-color:var(--acc)}
+.daycard .d{font-size:16px;font-weight:700}
+.daycard .net{font-size:21px;font-weight:800;margin:3px 0}
+.daycard .m{color:var(--dim);font-size:12.5px;line-height:1.55}
+.note{font-size:13px;color:var(--dim)}
+.note b{color:var(--tx)}
+svg text{font-family:inherit}
+</style>
+</head>
+<body><div class="wrap">
+<h1>光伏充电日志总览</h1>
+<div class="sub">2026-10-19 ~ 10-26 · 数据源 INA228 三路记录仪 + ESP 环境记录仪 · 点击日期卡跳转当日报告</div>
+
+<div class="card">
+<h2>① 五日电池净收支（正=净充电，负=净放电）</h2>
+<svg viewBox="0 0 980 280" width="100%">
+  <line x1="60" y1="140" x2="950" y2="140" stroke="#30363d" stroke-width="1"/>
+  <text x="18" y="144" fill="#8b949e" font-size="11">0</text>
+  <line x1="60" y1="31" x2="950" y2="31" stroke="#21262d" stroke-width="1" stroke-dasharray="4 4"/>
+  <text x="18" y="35" fill="#8b949e" font-size="11">+170</text>
+  <line x1="60" y1="249" x2="950" y2="249" stroke="#21262d" stroke-dasharray="4 4" stroke-width="1"/>
+  <text x="18" y="253" fill="#8b949e" font-size="11">−110</text>
+
+  <!-- 10-19 +1.40 -->
+  <rect x="100" y="139.1" width="66" height="0.9" fill="#3fb950" rx="1"/>
+  <text x="133" y="131" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">+1.40</text>
+  <!-- 10-20 +136.01 -->
+  <rect x="248" y="52.8" width="66" height="87.2" fill="#3fb950" rx="2"/>
+  <text x="281" y="44" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">+136.01</text>
+  <!-- 10-21 -16.18 -->
+  <rect x="396" y="140" width="66" height="10.4" fill="#f85149" rx="1"/>
+  <text x="429" y="166" fill="#f85149" font-size="12" text-anchor="middle" font-weight="bold">−16.18</text>
+  <!-- 10-23 -10.69 -->
+  <rect x="544" y="140" width="66" height="6.9" fill="#f85149" rx="1"/>
+  <text x="577" y="162" fill="#f85149" font-size="12" text-anchor="middle" font-weight="bold">−10.69</text>
+  <!-- 10-25 +167.92 -->
+  <rect x="692" y="32.3" width="66" height="107.7" fill="#3fb950" rx="2"/>
+  <text x="725" y="23" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">+167.92</text>
+  <!-- 10-26 +42.37 -->
+  <rect x="840" y="112.8" width="66" height="27.2" fill="#3fb950" rx="2"/>
+  <text x="873" y="104" fill="#3fb950" font-size="12" text-anchor="middle" font-weight="bold">+42.37</text>
+
+  <text x="133" y="272" fill="#e6edf3" font-size="12" text-anchor="middle">10-19</text>
+  <text x="281" y="272" fill="#e6edf3" font-size="12" text-anchor="middle">10-20</text>
+  <text x="429" y="272" fill="#e6edf3" font-size="12" text-anchor="middle">10-21</text>
+  <text x="577" y="272" fill="#e6edf3" font-size="12" text-anchor="middle">10-23</text>
+  <text x="725" y="272" fill="#e6edf3" font-size="12" text-anchor="middle">10-25</text>
+  <text x="873" y="272" fill="#e6edf3" font-size="12" text-anchor="middle">10-26</text>
+  <text x="931" y="140" fill="#8b949e" font-size="11" text-anchor="middle" transform="rotate(90 931 140)">mAh</text>
+</svg>
+<div class="note">六日累计 <b class="pos">+320.83 mAh</b>（其中两个大晴天贡献 +304，两个阴天合计 −26.9，10-26 阴天弱光 +42.4）。10-19 仅覆盖下午 4.36 h，10-21/10-23 为阴天/多云亏电日；10-26 同为 1 块钙钛矿。</div>
+</div>
+
+<div class="card">
+<h2>② 逐日收支明细</h2>
+<table>
+<tr><th>日期</th><th>面板</th><th>覆盖</th><th>光伏充入<br>mAh</th><th>整板消耗<br>mAh</th><th>电池净增<br>mAh</th><th>口径指标</th><th>光照峰值</th></tr>
+<tr><td><a href="pv-day-2026-10-19.html">10-19</a><span class="tag part">半日</span></td><td>4 块光伏板</td><td>4.36 h</td><td>20.53</td><td>19.13</td><td class="pos">+1.40</td><td>—</td><td>—</td></tr>
+<tr><td><a href="pv-day-2026-10-20.html">10-20</a></td><td>2 块硅板</td><td>全天</td><td>176.96</td><td>40.95</td><td class="pos">+136.01</td><td>利用率 23.1%</td><td>—</td></tr>
+<tr><td><a href="pv-day-2026-10-21.html">10-21</a></td><td>2 块硅板</td><td>全天</td><td>23.97</td><td>40.15</td><td class="neg">−16.18</td><td>满足率 59.7%</td><td>—</td></tr>
+<tr><td><a href="pv-day-2026-10-23.html">10-23</a></td><td>2 块硅板</td><td>9.8 h</td><td>28.64</td><td>39.33</td><td class="neg">−10.69</td><td>满足率 72.8%</td><td>BH 11880 lx</td></tr>
+<tr><td><a href="pv-day-2026-10-25.html">10-25</a><span class="tag pvk">钙钛矿</span><span class="tag err">CH2 断</span></td><td>1 块钙钛矿</td><td>9.06 h</td><td>202.40</td><td>34.48</td><td class="pos">+167.92</td><td>利用率 17.0%</td><td>BH 43112 lx</td></tr>
+<tr><td><a href="pv-day-2026-10-26.html">10-26</a><span class="tag part">阴</span></td><td><b>1 块钙钛矿</b></td><td>9.08 h</td><td>95.68</td><td>53.31</td><td class="pos">+42.37</td><td>利用率 55.7%</td><td>BH 9806 lx</td></tr>
+</table>
+<div class="note" style="margin-top:10px">
+口径：<b>净充电日</b>（光伏&gt;整板）用「利用率 = 整板/光伏」；<b>亏电日</b>（光伏&lt;整板）用「满足率 = 光伏/整板」，不混用、不封顶引用。<br>
+面板配置：10-19 = 4 块光伏板；10-20/21/23 = 2 块硅板；10-25 = 1 块钙钛矿；10-26 = 1 块钙钛矿（同 10-25）。<b>三天面板配置各不相同，跨日对比不可直接归一</b>（钙钛矿弱光响应更好，见当天报告数据质量注记：13:16 后 CH2 支路接触不良失真，账目大头仍有效）。10-19 为首日试录仅覆盖下午；10-23 仅 08:59~18:49。
+</div>
+</div>
+
+<div class="card">
+<h2>③ 每日报告入口</h2>
+<div class="daycards">
+<a class="daycard" href="pv-day-2026-10-19.html"><div class="d">10-19（半日）</div><div class="net pos">+1.40 mAh</div><div class="m">光伏收支首日试录 · 15:00 起覆盖 4.36 h · 电流曲线 30 s 均值</div></a>
+<a class="daycard" href="pv-day-2026-10-20.html"><div class="d">10-20（晴）</div><div class="net pos">+136.01 mAh</div><div class="m">光伏 176.96 / 整板 40.95 · 利用率 23.1% · 三段式：晨间弱光慢充 / 光照拉锯 / 弱光涓流</div></a>
+<a class="daycard" href="pv-day-2026-10-21.html"><div class="d">10-21（阴）</div><div class="net neg">−16.18 mAh</div><div class="m">光伏 23.97 / 整板 40.15 · 满足率 59.7% · 正午拉锯段是唯一净充电窗口 · 现场照 IMG_20261021_142559</div></a>
+<a class="daycard" href="pv-day-2026-10-23.html"><div class="d">10-23（阴）</div><div class="net neg">−10.69 mAh</div><div class="m">光伏 28.64 / 整板 39.33 · 满足率 72.8% · 光照↔I3 同步互证（log99 × ESP log7）· 有光无输出矛盾待现场查</div></a>
+<a class="daycard" href="pv-day-2026-10-25.html"><div class="d">10-25（晴·钙钛矿）</div><div class="net pos">+167.92 mAh</div><div class="m">光伏 202.40 / 整板 34.48 · 首日钙钛矿组件 · 全天无亏电段 · ⚠ 13:16 起 CH2 支路接触不良（见报告注记）</div></a>
+<a class="daycard" href="pv-day-2026-10-26.html"><div class="d">10-26（阴·弱光）</div><div class="net pos">+42.37 mAh</div><div class="m">光伏 95.68 / 整板 53.31 · 利用率 55.7% · 09:57 起拉锯、17:08 起弱光涓流（照度仅 1049 lx）· 全天含夜间净 +16.14 mAh · ⚠ 面板配置待确认</div></a>
+</div>
+</div>
+
+<div class="card">
+<h2>④ 光照单日报告（ESP 环境记录仪）</h2>
+<table>
+<tr><th>日期</th><th class="desc">说明</th></tr>
+<tr><td><a href="light-2026-10-20.html">10-20</a></td><td class="desc">BH1750 全天读 0，仅 VEML7700 counts（分段系数换算）</td></tr>
+<tr><td><a href="light-2026-10-21.html">10-21</a></td><td class="desc">与 INA log96 互证（10.87 h 对齐）· <b>BH1750 直读、97% 有效帧</b>（峰值 12213 lx @13:43）· VEML 峰 3373 lx · ESP RTC 未授时（uptime 对齐）</td></tr>
+<tr><td><a href="light-2026-10-23.html">10-23</a></td><td class="desc">与 INA log99 互证（9.84 h 对齐）· ESP RTC 未授时（uptime 对齐）</td></tr>
+<tr><td><a href="light-2026-10-25.html">10-25</a></td><td class="desc">固件 v3 双 lux 直读 · BH1750 修复后首个全天（峰值 43112 lx）· RTC 已授时</td></tr>
+<tr><td><a href="light-2026-10-26.html">10-26</a></td><td class="desc">BH1750 <b>全天有效</b>（中位 3979 lx，BH/VEML≈1.83，零值帧仅出现在 18:42 后全黑段）· VEML 峰 3082 lx / BH 峰 9806 lx（阴天弱光日）· 09:53~18:58（9.08 h，无缺口）· 当日已出 pv-day（光伏 95.68 mAh / 电池 +42.37 mAh，单块钙钛矿）</td></tr>
+</table>
+<div class="note" style="margin-top:10px">相关：<a href="overview-2026-10-19.html">10-19 整机总览</a> · <a href="index.html">项目首页</a>。原始日志备份于 <code>D:\车牌光伏备份\{udisk_logs, esp_logs}</code>。
+<br><b>找日志提示：</b>10-21 / 10-23 的 ESP 日志文件名是 <code>log6.000101.170527.txt</code> / <code>log7.000103.174445.txt</code>——那两天固件用 v2（RTC 未授时，起始时间写死 2000-01-01），<b>文件名里的 2000 年不代表数据无效</b>，按 uptime 与 INA 末帧对齐即可用。</div>
+</div>
+
+<div class="card"><h2>钙钛矿组件 · 厂商弱光参数（70×70 mm）</h2><table><tr><th>光照 (lux)</th><th>Voc/V</th><th>Isc/mA</th><th>Vmax/V</th><th>Imax/mA</th><th>Pmax/mW</th></tr><tr><td>500</td><td>4.50</td><td>0.60</td><td>3.80</td><td>0.55</td><td>2.10</td></tr><tr><td>1000</td><td>4.70</td><td>1.10</td><td>4.00</td><td>1.05</td><td>4.20</td></tr><tr><td>2000</td><td>4.90</td><td>2.00</td><td>4.10</td><td>1.95</td><td>8.00</td></tr><tr><td>5000</td><td>5.00</td><td>5.30</td><td>4.20</td><td>4.95</td><td>20.50</td></tr></table><div class="note" style="margin-top:10px">厂商标称：室内弱光下同尺寸发电量为非晶硅的 <b>2~3 倍</b>；办公环境（弱光）下每小时约可发电 <b>2 mW</b>。测试条件：25 ℃、4000K LED 光源，误差下限 −5%。<b>备注：强光（阳光直射）下开路电压可能超过 5.5 V</b>——CN3142 的输入要注意该余量；Vmax 上限 4.20 V 与 CN3142 充电管理匹配（VPV 被钳在充电电压附近属正常）。</div></div><div class="card"><h2>硅光伏板 · 单板参数（53×30 mm 多晶硅）</h2><div class="note" style="margin-top:8px;line-height:1.8">工作电压 <b>5 V</b>（多晶硅）· 工作电流 <b>0~30 mA</b>（取决于光照强度）· 尺寸 <b>53×30 mm</b>（≈15.9 cm²，标称功率 ~150 mW）<br>测试条件：<b>STC 标准测试条件</b>（25 ℃、AM1.5、1000 W/m²）——室内/弱光下实际输出远低于此标称。<br>使用记录：10-20 / 10-21 / 10-23 各部署 <b>2 块</b>此板；10-25 起换 1 块 70×70 mm 钙钛矿。晴天实测折算 ~88 mAh/板（≈3.9 V × 343 mWh，约合 STC 满功率 2.3 h 当量），钙钛矿单板同日条件 ~202 mAh（≈2.3×）。</div></div><div class="card"><h2>⑤ 硅 vs 钙钛矿 · 面积/照度归一对比（BH 直读口径）</h2>
+<table>
+<tr><th>指标</th><th>硅 53×30 ×2</th><th>钙钛矿 70×70 ×1</th><th>比值</th></tr>
+<tr><td>单板面积</td><td>15.9 cm²</td><td>49 cm²</td><td>钙 = 3.1×</td></tr>
+<tr><td>晴天单板产出</td><td>88.5 mAh（10-20）</td><td>202.4 mAh（10-25）</td><td>钙 = 2.3×</td></tr>
+<tr><td>晴天面积归一</td><td>5.56 mAh/cm²</td><td>4.13 mAh/cm²</td><td>硅 +35%</td></tr>
+<tr><td>晴天照度归一</td><td class="desc">~56 µAh/(klx·h·cm²)<br><small>10-20 剂量 ~100 klx·h（BH 坏，VEML 折算 ±30%）</small></td><td class="desc">31.1 µAh/(klx·h·cm²)<br><small>10-25 剂量 132.9 klx·h（BH 直读）</small></td><td>硅 ≈1.8×</td></tr>
+<tr><td><b>阴天照度归一</b></td><td class="desc"><b>10-21：18.1</b>（23.97 mAh / 41.6 klx·h）<br><b>10-23：21.6</b>（28.64 mAh / 41.7 klx·h）<br><small>BH 直读，两日一致性好</small></td><td class="desc"><b>10-26：56.3</b>（95.68 mAh / 34.7 klx·h）<br><small>BH 直读，1 块 49 cm²</small></td><td><b class="pos">钙 2.6~3.1×</b></td></tr><tr><td>阴天面积归一</td><td>0.754 / 0.901 mAh/cm²</td><td><b>1.953 mAh/cm²</b></td><td><b class="pos">钙 2.2~2.6×</b></td></tr>
+<tr><td>规格书功率密度</td><td class="desc">STC 9.4 mW/cm²；5000 lx 线性折 ~0.47</td><td>0.418 mW/cm² @5000 lx</td><td>低照度相近</td></tr>
+</table>
+<div class="note" style="margin-top:10px">
+<b>解读：</b>① 晴天强光下多晶硅单位面积/单位照度产出<b>高 1.3~1.8×</b>——钙钛矿标称"2~3 倍"是对非晶硅，不是多晶硅；
+② <b>阴天弱光下硅的照度产出掉到晴天的 1/3</b>（18~22 vs ~56）：弱光 Vmp 塌到电池钳位 4.2 V 以下，充电效率大减（10-23 1313 lx 时 VPV 0.02 V 归零即极端例）；<b>同天气对照，钙钛矿 10-26 阴天 56.3，是硅两阴日的 2.6~3.1×</b>；
+③ 钙钛矿阴天不但没掉、反而<b>高于晴天（56.3 vs 31.1）</b>——恒压电流源工作，强光段反被 CN3142 输入钳位限流，<b>弱光才是它的甜区</b>；阴天面积归一发电量钙 1.953 vs 硅 0.754/0.901 mAh/cm²（<b>2.2~2.6×</b>）；④ <b>口径已复核</b>：硅两列用备份日志（<code>esp_logs\log6.000101…</code> / <code>log7.000103…</code>）<b>与钙钛矿同脚本重算，四项逐项吻合</b>（23.97 / 28.64 mAh、41.6 / 41.7 klx·h、18.1 / 21.6、0.754 / 0.901），不存在新旧口径混算；剩余不确定只剩 <b>BH 单点 vs 板面受光差异</b>——<b>阴天两板同场 A/B 一天</b>可把它排掉；
+⑤ 10-22 有 INA 日志（log97/98）但当日 ESP 未记录光照，无法做照度归一，可补出 pv-day 报告。
+</div></div><div class="card"><h2>⑥ 分照度区间 · 面积归一功率对比（lux-I 配对，±2 s 对齐，2.8~3.2 万帧/日）</h2>
+<b style="color:var(--acc)">① 单位面积功率 µW/(klx·cm²)</b>
+<svg viewBox="0 0 960 352" width="100%" role="img" xmlns="http://www.w3.org/2000/svg"><title>各照度区间单位面积功率柱状图（四系列并排）</title><rect x="60" y="10" width="11" height="11" fill="#888780" rx="2"/><text x="76" y="20" fill="#c9d1d9" font-size="11.5">硅×2 · 10-21（阴）</text><rect x="200.39999999999998" y="10" width="11" height="11" fill="#b4b2a9" rx="2"/><text x="216.39999999999998" y="20" fill="#c9d1d9" font-size="11.5">硅×2 · 10-23（阴）</text><rect x="340.79999999999995" y="10" width="11" height="11" fill="#e8a13c" rx="2"/><text x="356.79999999999995" y="20" fill="#c9d1d9" font-size="11.5">钙钛矿 · 10-25（晴）</text><rect x="481.19999999999993" y="10" width="11" height="11" fill="#f2c277" rx="2"/><text x="497.19999999999993" y="20" fill="#c9d1d9" font-size="11.5">钙钛矿 · 10-26（阴）</text><line x1="60" y1="286.0" x2="940" y2="286.0" stroke="#30363d" stroke-width="1"/><text x="52" y="290.0" fill="#8b949e" font-size="12" text-anchor="end">0</text><line x1="60" y1="225.5" x2="940" y2="225.5" stroke="#30363d" stroke-width="1"/><text x="52" y="229.5" fill="#8b949e" font-size="12" text-anchor="end">80</text><line x1="60" y1="165.0" x2="940" y2="165.0" stroke="#30363d" stroke-width="1"/><text x="52" y="169.0" fill="#8b949e" font-size="12" text-anchor="end">160</text><line x1="60" y1="104.5" x2="940" y2="104.5" stroke="#30363d" stroke-width="1"/><text x="52" y="108.5" fill="#8b949e" font-size="12" text-anchor="end">240</text><line x1="60" y1="44.0" x2="940" y2="44.0" stroke="#30363d" stroke-width="1"/><text x="52" y="48.0" fill="#8b949e" font-size="12" text-anchor="end">320</text><text x="940" y="20" fill="#8b949e" font-size="11" text-anchor="end">* 半透明柱 = 未钳位（VPV &lt; 4.4 V，CN3142 截止，功率进不了电池）</text><rect x="46" y="246.7" width="26" height="39.3" fill="#888780" fill-opacity="0.32" stroke="#888780" stroke-opacity="0.32"/><text x="59" y="240.7" fill="#8b949e" font-size="11" text-anchor="middle">52*</text><rect x="222" y="227.8" width="26" height="58.2" fill="#888780" fill-opacity="0.32" stroke="#888780" stroke-opacity="0.32"/><text x="235" y="221.8" fill="#8b949e" font-size="11" text-anchor="middle">77*</text><rect x="398" y="232.3" width="26" height="53.7" fill="#888780" fill-opacity="0.32" stroke="#888780" stroke-opacity="0.32"/><text x="411" y="226.3" fill="#8b949e" font-size="11" text-anchor="middle">71*</text><rect x="574" y="254.2" width="26" height="31.8" fill="#888780" fill-opacity="1" stroke="#888780" stroke-opacity="1"/><text x="587" y="248.2" fill="#c9d1d9" font-size="11" text-anchor="middle">42</text><rect x="750" y="203.6" width="26" height="82.4" fill="#888780" fill-opacity="1" stroke="#888780" stroke-opacity="1"/><text x="763" y="197.6" fill="#c9d1d9" font-size="11" text-anchor="middle">109</text><rect x="76" y="245.2" width="26" height="40.8" fill="#b4b2a9" fill-opacity="0.32" stroke="#b4b2a9" stroke-opacity="0.32"/><text x="89" y="239.2" fill="#8b949e" font-size="11" text-anchor="middle">54*</text><rect x="252" y="227.8" width="26" height="58.2" fill="#b4b2a9" fill-opacity="0.32" stroke="#b4b2a9" stroke-opacity="0.32"/><text x="265" y="221.8" fill="#8b949e" font-size="11" text-anchor="middle">77*</text><rect x="428" y="253.5" width="26" height="32.5" fill="#b4b2a9" fill-opacity="1" stroke="#b4b2a9" stroke-opacity="1"/><text x="441" y="247.5" fill="#c9d1d9" font-size="11" text-anchor="middle">43</text><rect x="604" y="252.7" width="26" height="33.3" fill="#b4b2a9" fill-opacity="1" stroke="#b4b2a9" stroke-opacity="1"/><text x="617" y="246.7" fill="#c9d1d9" font-size="11" text-anchor="middle">44</text><rect x="780" y="179.4" width="26" height="106.6" fill="#b4b2a9" fill-opacity="1" stroke="#b4b2a9" stroke-opacity="1"/><text x="793" y="173.4" fill="#c9d1d9" font-size="11" text-anchor="middle">141</text><rect x="106" y="82.6" width="26" height="203.4" fill="#e8a13c" fill-opacity="1" stroke="#e8a13c" stroke-opacity="1"/><text x="119" y="76.6" fill="#c9d1d9" font-size="11" text-anchor="middle">269</text><rect x="282" y="176.3" width="26" height="109.7" fill="#e8a13c" fill-opacity="1" stroke="#e8a13c" stroke-opacity="1"/><text x="295" y="170.3" fill="#c9d1d9" font-size="11" text-anchor="middle">145</text><rect x="458" y="59.9" width="26" height="226.1" fill="#e8a13c" fill-opacity="1" stroke="#e8a13c" stroke-opacity="1"/><text x="471" y="53.9" fill="#c9d1d9" font-size="11" text-anchor="middle">299</text><rect x="634" y="92.4" width="26" height="193.6" fill="#e8a13c" fill-opacity="1" stroke="#e8a13c" stroke-opacity="1"/><text x="647" y="86.4" fill="#c9d1d9" font-size="11" text-anchor="middle">256</text><rect x="810" y="152.1" width="26" height="133.9" fill="#e8a13c" fill-opacity="1" stroke="#e8a13c" stroke-opacity="1"/><text x="823" y="146.1" fill="#c9d1d9" font-size="11" text-anchor="middle">177</text><rect x="136" y="97.7" width="26" height="188.3" fill="#f2c277" fill-opacity="1" stroke="#f2c277" stroke-opacity="1"/><text x="149" y="91.7" fill="#c9d1d9" font-size="11" text-anchor="middle">249</text><rect x="312" y="147.6" width="26" height="138.4" fill="#f2c277" fill-opacity="1" stroke="#f2c277" stroke-opacity="1"/><text x="325" y="141.6" fill="#c9d1d9" font-size="11" text-anchor="middle">183</text><rect x="488" y="88.6" width="26" height="197.4" fill="#f2c277" fill-opacity="1" stroke="#f2c277" stroke-opacity="1"/><text x="501" y="82.6" fill="#c9d1d9" font-size="11" text-anchor="middle">261</text><rect x="664" y="91.6" width="26" height="194.4" fill="#f2c277" fill-opacity="1" stroke="#f2c277" stroke-opacity="1"/><text x="677" y="85.6" fill="#c9d1d9" font-size="11" text-anchor="middle">257</text><rect x="840" y="90.9" width="26" height="195.1" fill="#f2c277" fill-opacity="1" stroke="#f2c277" stroke-opacity="1"/><text x="853" y="84.9" fill="#c9d1d9" font-size="11" text-anchor="middle">258</text><text x="104" y="306" fill="#c9d1d9" font-size="12" text-anchor="middle">100~300 lx</text><text x="280" y="306" fill="#c9d1d9" font-size="12" text-anchor="middle">300~1000 lx</text><text x="456" y="306" fill="#c9d1d9" font-size="12" text-anchor="middle">1000~2000 lx</text><text x="632" y="306" fill="#c9d1d9" font-size="12" text-anchor="middle">2000~5000 lx</text><text x="808" y="306" fill="#c9d1d9" font-size="12" text-anchor="middle">5000~20000 lx</text></svg>
+<div class="note" style="margin:4px 0 10px">浅色带 * 的硅柱 = VPV 未达钳位（&lt;≈4.3 V），功率实际进不了电池，仅作参考。</div>
+<b style="color:var(--acc)">② 面板工作电压 VPV（V）—— 钳位看这条</b>
+<svg viewBox="0 0 960 300" width="100%" role="img" xmlns="http://www.w3.org/2000/svg"><title>各照度区间面板工作电压折线图（四系列）</title><line x1="60" y1="219.7" x2="940" y2="219.7" stroke="#30363d" stroke-width="1"/><text x="52" y="223.7" fill="#8b949e" font-size="12" text-anchor="end">2 V</text><line x1="60" y1="159.2" x2="940" y2="159.2" stroke="#30363d" stroke-width="1"/><text x="52" y="163.2" fill="#8b949e" font-size="12" text-anchor="end">3 V</text><line x1="60" y1="98.7" x2="940" y2="98.7" stroke="#30363d" stroke-width="1"/><text x="52" y="102.7" fill="#8b949e" font-size="12" text-anchor="end">4 V</text><line x1="60" y1="38.2" x2="940" y2="38.2" stroke="#30363d" stroke-width="1"/><text x="52" y="42.2" fill="#8b949e" font-size="12" text-anchor="end">5 V</text><line x1="60" y1="74.5" x2="940" y2="74.5" stroke="#f85149" stroke-width="1.2" stroke-dasharray="6,4"/><text x="68" y="90.5" fill="#f85149" font-size="12">≈4.4 V 电池钳位（低于它 CN3142 截止）</text><polyline points="148.0,221.5 324.0,142.3 500.0,107.8 676.0,51.5 852.0,68.4" fill="none" stroke="#888780" stroke-width="2.4" stroke-dasharray="7,5"/><circle cx="148.0" cy="221.5" r="3.8" fill="#888780"/><circle cx="324.0" cy="142.3" r="3.8" fill="#888780"/><circle cx="500.0" cy="107.8" r="3.8" fill="#888780"/><circle cx="676.0" cy="51.5" r="3.8" fill="#888780"/><circle cx="852.0" cy="68.4" r="3.8" fill="#888780"/><polyline points="148.0,224.5 324.0,151.9 500.0,74.5 676.0,45.5 852.0,68.4" fill="none" stroke="#b4b2a9" stroke-width="2.4" stroke-dasharray="7,5"/><circle cx="148.0" cy="224.5" r="3.8" fill="#b4b2a9"/><circle cx="324.0" cy="151.9" r="3.8" fill="#b4b2a9"/><circle cx="500.0" cy="74.5" r="3.8" fill="#b4b2a9"/><circle cx="676.0" cy="45.5" r="3.8" fill="#b4b2a9"/><circle cx="852.0" cy="68.4" r="3.8" fill="#b4b2a9"/><polyline points="148.0,64.8 324.0,42.4 500.0,69.1 676.0,68.4 852.0,66.6" fill="none" stroke="#e8a13c" stroke-width="2.4"/><circle cx="148.0" cy="64.8" r="3.8" fill="#e8a13c"/><circle cx="324.0" cy="42.4" r="3.8" fill="#e8a13c"/><circle cx="500.0" cy="69.1" r="3.8" fill="#e8a13c"/><circle cx="676.0" cy="68.4" r="3.8" fill="#e8a13c"/><circle cx="852.0" cy="66.6" r="3.8" fill="#e8a13c"/><polyline points="148.0,63.6 324.0,50.9 500.0,69.1 676.0,67.8 852.0,66.0" fill="none" stroke="#f2c277" stroke-width="2.4"/><circle cx="148.0" cy="63.6" r="3.8" fill="#f2c277"/><circle cx="324.0" cy="50.9" r="3.8" fill="#f2c277"/><circle cx="500.0" cy="69.1" r="3.8" fill="#f2c277"/><circle cx="676.0" cy="67.8" r="3.8" fill="#f2c277"/><circle cx="852.0" cy="66.0" r="3.8" fill="#f2c277"/><text x="148.0" y="54.6" fill="#f2c277" font-size="11" text-anchor="middle">4.58</text><text x="148.0" y="80.8" fill="#e8a13c" font-size="11" text-anchor="middle">4.56</text><text x="148.0" y="212.5" fill="#888780" font-size="11" text-anchor="middle">1.97</text><text x="148.0" y="240.5" fill="#b4b2a9" font-size="11" text-anchor="middle">1.92</text><text x="324.0" y="33.4" fill="#e8a13c" font-size="11" text-anchor="middle">4.93</text><text x="324.0" y="66.9" fill="#f2c277" font-size="11" text-anchor="middle">4.79</text><text x="324.0" y="133.3" fill="#888780" font-size="11" text-anchor="middle">3.28</text><text x="324.0" y="167.9" fill="#b4b2a9" font-size="11" text-anchor="middle">3.12</text><text x="500.0" y="60.1" fill="#e8a13c" font-size="11" text-anchor="middle">4.49</text><text x="500.0" y="85.1" fill="#f2c277" font-size="11" text-anchor="middle">4.49</text><text x="500.0" y="106.5" fill="#b4b2a9" font-size="11" text-anchor="middle">4.40</text><text x="500.0" y="123.8" fill="#888780" font-size="11" text-anchor="middle">3.85</text><text x="676.0" y="36.5" fill="#b4b2a9" font-size="11" text-anchor="middle">4.88</text><text x="676.0" y="67.5" fill="#888780" font-size="11" text-anchor="middle">4.78</text><text x="676.0" y="83.8" fill="#f2c277" font-size="11" text-anchor="middle">4.51</text><text x="676.0" y="100.4" fill="#e8a13c" font-size="11" text-anchor="middle">4.50</text><text x="852.0" y="57.0" fill="#f2c277" font-size="11" text-anchor="middle">4.54</text><text x="852.0" y="82.6" fill="#e8a13c" font-size="11" text-anchor="middle">4.53</text><text x="852.0" y="100.4" fill="#888780" font-size="11" text-anchor="middle">4.50</text><text x="852.0" y="116.4" fill="#b4b2a9" font-size="11" text-anchor="middle">4.50</text><text x="148.0" y="286" fill="#c9d1d9" font-size="12" text-anchor="middle">100~300 lx</text><text x="324.0" y="286" fill="#c9d1d9" font-size="12" text-anchor="middle">300~1000 lx</text><text x="500.0" y="286" fill="#c9d1d9" font-size="12" text-anchor="middle">1000~2000 lx</text><text x="676.0" y="286" fill="#c9d1d9" font-size="12" text-anchor="middle">2000~5000 lx</text><text x="852.0" y="286" fill="#c9d1d9" font-size="12" text-anchor="middle">5000~20000 lx</text></svg>
+<details style="margin-top:12px"><summary style="cursor:pointer;color:var(--acc)">▸ 展开：电流明细表（µA/(klx·cm²)）</summary>
+<table>
+<tr><th>BH 光照区间</th><th>硅×2 · 10-21（阴）</th><th>硅×2 · 10-23（阴）</th><th>钙 · 10-25（晴）</th><th>钙 · 10-26（阴）</th><th>阴天钙/硅</th></tr>
+<tr><td>100~300 lx</td><td>26.3</td><td>28.3</td><td><b>59.0</b></td><td>54.4</td><td>≈2.0×</td></tr>
+<tr><td>300~1000 lx</td><td>23.5</td><td>24.8</td><td><b>29.4</b></td><td>38.2</td><td>≈1.6×</td></tr>
+<tr><td>1000~2000 lx</td><td>18.3</td><td>9.8</td><td><b>66.7</b></td><td>58.2</td><td>3.2~6.0×</td></tr>
+<tr><td>2000~5000 lx</td><td>8.8</td><td>9.0</td><td><b>56.8</b></td><td>57.0</td><td>6.3×</td></tr>
+<tr><td>5000~20000 lx</td><td>24.1</td><td>31.3</td><td><b>39.0</b></td><td>56.9</td><td>1.8~2.4×</td></tr>
+<tr><td>单位</td><td colspan="3" style="text-align:center">µA/(klx·cm²)——每 klx 照度、每 cm² 面积的充电电流</td><td>—</td></tr>
+</table>
+</details>
+<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--acc)">▸ 展开：功率与 VPV 明细表（钳位状态）</summary>
+<table>
+<tr><th>BH 光照区间</th><th>硅 10-21<br>VPV / P</th><th>硅 10-23<br>VPV / P</th><th>钙 10-25<br>VPV / P</th><th>钙 10-26<br>VPV / P</th><th>阴天钙/硅 功率比</th></tr>
+<tr><td>100~300 lx</td><td>1.97 V* / 52</td><td>1.92 V* / 54</td><td>4.56 V / <b>269</b></td><td>4.58 V / 249</td><td>≈4.6×</td></tr>
+<tr><td>300~1000 lx</td><td>3.28 V* / 77</td><td>3.12 V* / 77</td><td>4.93 V / <b>145</b></td><td>4.79 V / 183</td><td>≈2.4×</td></tr>
+<tr><td>1000~2000 lx</td><td>3.85 V* / 71</td><td>4.40 V / 43</td><td>4.49 V / <b>299</b></td><td>4.49 V / 261</td><td>3.7~6.1×</td></tr>
+<tr><td>2000~5000 lx</td><td>4.78 V / 42</td><td>4.88 V / 44</td><td>4.50 V / <b>256</b></td><td>4.51 V / 257</td><td>≈5.9×</td></tr>
+<tr><td>5000~20000 lx</td><td>4.50 V / 109</td><td>4.50 V / 141</td><td>4.53 V / <b>177</b></td><td>4.54 V / 258</td><td>1.8~2.4×</td></tr>
+<tr><td>单位</td><td colspan="3" style="text-align:center">P: µW/(klx·cm²) = VPV × 电流表</td><td>—</td></tr>
+</table>
+</details>
+<div class="note" style="margin-top:10px">
+<b>钳位判读：</b><b>钙钛矿 VPV 全天钉在 4.5 V 附近（4.49~4.93 V，180→12257 lx 不变）= 被 CN3142 输入钳位</b>，恒压电流源工作，P = 4.5 V × I 随光照线性涨；
+<b>硅板低照度未钳位</b>（带 * 行）：VPV 跟着光照爬（200 lx 仅 1.9 V），低于电池钳位的区间 CN3142 截止、功率进不了电池，lux ≥2000~5000 才够到钳位。<br>
+<b>解读：</b>① <b>阴天同天气对比</b>（10-26 钙 vs 10-21/10-23 硅）：100~300 lx 钙 4.6×，1000~5000 lx 拉到 3.7~6.3×——硅在 2000~5000 lx 段塌到 42~44（两阴天一致），钙钛矿两日都在 250 上下不塌；
+② <b>实打实能充电的功率：硅 5000 lx 以上才 109~141，钙钛矿从 180 lx 起就有 145~299</b>；钙钛矿 10-26 阴天（183~261）与 10-25 晴天（145~299）<b>全档重合</b>——它的输出几乎只跟即时照度走，不吃"天气类型"；
+③ 口径：<b>四列同脚本同参数</b>（ESP BH1750 直读 lux ↔ INA CH3 ±2 s 最近邻，分档取中位，除面积 31.8 / 49 cm²）。硅两列 2026-10-27 用备份日志重跑，与图中数值逐项一致（见下表），故四列可直接横向比；BH 单点 vs 板面受光差异仍存，倍数作量级结论。
+<br>
+<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--acc)">▸ 展开：硅两阴日重算复核（备份日志 × 同脚本）</summary>
+<table class="wrapall">
+<tr><th>日期</th><th>INA 日志</th><th>ESP 日志</th><th>对齐窗口</th><th>配对帧</th><th>光伏电量</th><th>BH 剂量</th><th>照度归一</th><th>面积归一</th><th>与图中列</th></tr>
+<tr><td>10-21</td><td>log96.261021.082024</td><td>log6.000101.170527</td><td>08:19~19:11（10.87 h）</td><td>33520</td><td>23.97 mAh</td><td>41.6 klx·h</td><td>18.1</td><td>0.754</td><td class="pos">✓ 一致</td></tr>
+<tr><td>10-23</td><td>log99.261023.085921</td><td>log7.000103.174445</td><td>08:59~18:49（9.84 h）</td><td>30296</td><td>28.64 mAh</td><td>41.7 klx·h</td><td>21.6</td><td>0.901</td><td class="pos">✓ 一致</td></tr>
+</table>
+<div class="note" style="margin-top:8px">脚本 <code>.workbuddy\tmp\bin_lux_si.py</code>；分档中位（µA/(klx·cm²)）10-21：26.3 / 23.5 / 18.3 / 8.8 / 24.1，10-23：28.4 / 24.8 / 9.8 / 9.0 / 31.3，与上方表格逐格吻合（10-23 首档 28.4 vs 图中 28.3 属四舍五入）。<b>结论：硅两列并非"旧口径估算"，是同一口径实测。</b></div>
+</details>
+</div></div></div></body></html>
