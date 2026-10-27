@@ -64,23 +64,23 @@
     <svg viewBox="0 0 680 190" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Microsoft YaHei,sans-serif">
       <text x="30" y="24" font-size="13.5" font-weight="bold" fill="#e6edf3">A/B/A：睡态电流随 DBGMCU_CR 开关跳变（同一块板、同一台表）</text>
       <!-- A -->
-      <text x="30" y="58" font-size="12" fill="#334155">A · 连过 OpenOCD（0x307）</text>
+      <text x="30" y="58" font-size="12" fill="#c9d1d9">A · 连过 OpenOCD（0x307）</text>
       <rect x="255" y="46" width="282" height="18" rx="4" fill="#f87171"/>
-      <text x="545" y="60" font-size="12" fill="#b91c1c" font-weight="bold">1.042 mA（假）</text>
+      <text x="545" y="60" font-size="12" fill="#f85149" font-weight="bold">1.042 mA（假）</text>
       <!-- B -->
-      <text x="30" y="94" font-size="12" fill="#334155">B · SWD 清零（0x0）</text>
+      <text x="30" y="94" font-size="12" fill="#c9d1d9">B · SWD 清零（0x0）</text>
       <rect x="255" y="82" width="60" height="18" rx="4" fill="#34d399"/>
       <text x="323" y="96" font-size="12" fill="#3fb950" font-weight="bold">0.220 mA（真）</text>
       <!-- A' -->
-      <text x="30" y="130" font-size="12" fill="#334155">A′ · 再连 OpenOCD（0x307）</text>
+      <text x="30" y="130" font-size="12" fill="#c9d1d9">A′ · 再连 OpenOCD（0x307）</text>
       <rect x="255" y="118" width="282" height="18" rx="4" fill="#f87171"/>
-      <text x="545" y="132" font-size="12" fill="#b91c1c" font-weight="bold">1.042 mA（复现）</text>
+      <text x="545" y="132" font-size="12" fill="#f85149" font-weight="bold">1.042 mA（复现）</text>
       <!-- scale note -->
       <text x="255" y="160" font-size="10.5" fill="#94a3b8">0</text>
-      <line x1="255" y1="150" x2="255" y2="156" stroke="#cbd5e1"/>
-      <line x1="396" y1="150" x2="396" y2="156" stroke="#cbd5e1"/>
+      <line x1="255" y1="150" x2="255" y2="156" stroke="#8b949e"/>
+      <line x1="396" y1="150" x2="396" y2="156" stroke="#8b949e"/>
       <text x="396" y="166" font-size="10.5" fill="#94a3b8" text-anchor="middle">0.52</text>
-      <line x1="537" y1="150" x2="537" y2="156" stroke="#cbd5e1"/>
+      <line x1="537" y1="150" x2="537" y2="156" stroke="#8b949e"/>
       <text x="537" y="166" font-size="10.5" fill="#94a3b8" text-anchor="middle">1.05 mA</text>
     </svg>
 
@@ -107,7 +107,7 @@
       <text x="24" y="22" font-size="13.5" font-weight="bold" fill="#e6edf3">各工况中位电流（对数轴，0.1 – 100 mA）</text>
       <!-- gridlines: log positions. x0=210, x100=640 ; log10 mapping: x = 210 + (log10(v)+1)/3 * 430 -->
       <!-- v=0.1->210, 1->353, 10->496, 100->640 -->
-      <g stroke="#e2e8f0">
+      <g stroke="#30363d">
         <line x1="210" y1="34" x2="210" y2="300"/><line x1="353" y1="34" x2="353" y2="300"/>
         <line x1="496" y1="34" x2="496" y2="300"/><line x1="640" y1="34" x2="640" y2="300"/>
       </g>
@@ -117,7 +117,7 @@
       </g>
       <!-- rows: y start 46, step 34 ; x = 210 + (log10(v)+1)/3*430 -->
       <!-- Stop 0.226 -> 210+(log10 .226+1)/3*433 => log10(2.26)=0.354; (0.354)/3*433=51 -> 261 -->
-      <g font-size="11.5" fill="#334155">
+      <g font-size="11.5" fill="#c9d1d9">
         <text x="200" y="55" text-anchor="end">Stop 睡态</text>
         <rect x="261" y="44" width="14" height="16" rx="3" fill="#34d399"/><text x="282" y="57" font-weight="bold" fill="#3fb950">0.226</text>
         <text x="200" y="89" text-anchor="end">Sleep（未真睡）</text>
@@ -133,7 +133,7 @@
         <text x="200" y="259" text-anchor="end">窗口轮睡段(Stop+绿灯)</text>
         <rect x="600" y="248" width="30" height="16" rx="3" fill="#f472b6"/><text x="636" y="261">20.6</text>
         <text x="200" y="293" text-anchor="end">绿 255 / 4G 会话</text>
-        <rect x="606" y="282" width="34" height="16" rx="3" fill="#ef4444"/><text x="606" y="279" fill="#b91c1c" font-weight="bold">22.7 / ~78</text>
+        <rect x="606" y="282" width="34" height="16" rx="3" fill="#ef4444"/><text x="606" y="279" fill="#f85149" font-weight="bold">22.7 / ~78</text>
       </g>
     </svg>
     <details>
@@ -160,7 +160,7 @@
       <rect x="24" y="38" width="449" height="34" rx="6" fill="#f472b6"/>
       <rect x="473" y="38" width="183" height="34" rx="6" fill="#34d399"/>
       <text x="248" y="60" text-anchor="middle" font-size="12.5" fill="#fff" font-weight="bold">6 轮×155 s≈15.5 min · 13.0 mAh · 71%</text>
-      <text x="564" y="60" text-anchor="middle" font-size="12.5" fill="#065f46" font-weight="bold">23.74 h Stop · 5.4 mAh · 29%</text>
+      <text x="564" y="60" text-anchor="middle" font-size="12.5" fill="#3fb950" font-weight="bold">23.74 h Stop · 5.4 mAh · 29%</text>
       <text x="24" y="96" font-size="11.5" fill="#94a3b8">粉 = 4G 会话+绿灯（每轮 155 s，最坏组合） · 绿 = 夜/日间停车 Stop 0.226 mA</text>
       <text x="24" y="114" font-size="11.5" fill="#94a3b8">压缩日两轮 P2/P3 差 0.6%，可重复。修正前旧口径：1.56 mA / 21 天（睡态被调试位污染）。</text>
     </svg>
@@ -207,7 +207,7 @@
         <svg viewBox="0 0 780 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Microsoft YaHei,sans-serif">
           <text x="24" y="22" font-size="13.5" font-weight="bold" fill="#e6edf3">每天上报轮数 → 续航天数（800 mAh 可用）</text>
           <!-- rows: x0=190, bar scale: days/105*300 -->
-          <g font-size="12" fill="#334155">
+          <g font-size="12" fill="#c9d1d9">
             <text x="180" y="58" text-anchor="end">1 轮/天</text>
             <rect x="190" y="45" width="300" height="17" rx="3" fill="#34d399"/>
             <text x="497" y="58" font-weight="bold" fill="#3fb950">105 天 · 0.32 mA · 0.18% (2.6 min)</text>
@@ -217,9 +217,9 @@
             <text x="180" y="122" text-anchor="end">4 轮/天</text>
             <rect x="190" y="109" width="163" height="17" rx="3" fill="#60a5fa"/>
             <text x="360" y="122">57 天 · 0.59 mA · 0.72% (10.3 min)</text>
-            <text x="180" y="154" text-anchor="end" font-weight="bold" fill="#b91c1c">6 轮/天 ◀ 本报告</text>
+            <text x="180" y="154" text-anchor="end" font-weight="bold" fill="#f85149">6 轮/天 ◀ 本报告</text>
             <rect x="190" y="141" width="126" height="17" rx="3" fill="#ef4444"/>
-            <text x="323" y="154" font-weight="bold" fill="#b91c1c">44 天 · 0.77 mA · 1.08% (15.5 min)</text>
+            <text x="323" y="154" font-weight="bold" fill="#f85149">44 天 · 0.77 mA · 1.08% (15.5 min)</text>
             <text x="180" y="186" text-anchor="end">8 轮/天</text>
             <rect x="190" y="173" width="100" height="17" rx="3" fill="#60a5fa"/>
             <text x="297" y="186">35 天 · 0.95 mA · 1.44% (20.7 min)</text>
@@ -230,7 +230,7 @@
             <rect x="190" y="237" width="40" height="17" rx="3" fill="#93c5fd"/>
             <text x="237" y="250">14 天 · 2.39 mA · 4.31% (62 min)</text>
           </g>
-          <g stroke="#e2e8f0"><line x1="190" y1="32" x2="190" y2="262"/></g>
+          <g stroke="#30363d"><line x1="190" y1="32" x2="190" y2="262"/></g>
           <text x="190" y="280" font-size="10.5" fill="#94a3b8">0 天</text>
           <text x="490" y="280" font-size="10.5" fill="#94a3b8" text-anchor="middle">105 天</text>
           <text x="24" y="296" font-size="11.5" fill="#94a3b8">场景：1=定点报位置 · 2=早晚各一趟 · 6=通勤早晚高峰 · 24=每小时实时追踪（条上末位百分数 = 活跃时间占空比，括号内 = 每天活跃分钟数 = N×155 s）</text>
@@ -246,13 +246,13 @@
   <div class="card">
     <svg viewBox="0 0 680 150" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Microsoft YaHei,sans-serif">
       <text x="24" y="22" font-size="13.5" font-weight="bold" fill="#e6edf3">各项节省量（mA）</text>
-      <g font-size="11.5" fill="#334155">
+      <g font-size="11.5" fill="#c9d1d9">
         <text x="24" y="52">① Sleep→Stop 真睡</text>
-        <rect x="215" y="40" width="410" height="16" rx="3" fill="#2563eb"/><text x="560" y="53" fill="#1d4ed8" font-weight="bold">−1.99</text>
+        <rect x="215" y="40" width="410" height="16" rx="3" fill="#2563eb"/><text x="560" y="53" fill="#79c0ff" font-weight="bold">−1.99</text>
         <text x="24" y="82">② 拆 LEDB2+R24 常亮</text>
-        <rect x="215" y="70" width="224" height="16" rx="3" fill="#3b82f6"/><text x="446" y="83" fill="#1d4ed8" font-weight="bold">−1.09</text>
+        <rect x="215" y="70" width="224" height="16" rx="3" fill="#3b82f6"/><text x="446" y="83" fill="#79c0ff" font-weight="bold">−1.09</text>
         <text x="24" y="112">③ 停 STM32 心跳/探活（在线态）</text>
-        <rect x="215" y="100" width="233" height="16" rx="3" fill="#60a5fa"/><text x="455" y="113" fill="#1d4ed8" font-weight="bold">−43.3 (60.7→17.4)</text>
+        <rect x="215" y="100" width="233" height="16" rx="3" fill="#60a5fa"/><text x="455" y="113" fill="#79c0ff" font-weight="bold">−43.3 (60.7→17.4)</text>
         <text x="24" y="138" font-size="11" fill="#94a3b8">④ lp_cycle 报完即断电：消灭 17 mA 常在线态 · ⑤ RTC 唤醒链路（下溢 bug 已修）</text>
       </g>
     </svg>
