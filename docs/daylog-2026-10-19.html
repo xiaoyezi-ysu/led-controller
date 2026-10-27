@@ -1,0 +1,237 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>车牌光伏 全天运行日志分析 2026-10-19</title><style>
+:root{color-scheme:dark;--bg:#0f1419;--card:#161c22;--fg:#e6edf3;--dim:#8b98a5;--grid:#2b3440;
+--acc:#4aa3ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;}
+
+body{margin:0;padding:24px;background:var(--bg);color:var(--fg);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.6;}
+.wrap{max-width:1060px;margin:0 auto;}
+h1{font-size:22px;margin:0 0 4px;} h2{font-size:17px;margin:26px 0 10px;padding-bottom:6px;
+border-bottom:1px solid var(--grid);}
+table{border-collapse:collapse;width:100%;font-size:12.5px;margin:8px 0;}
+th,td{border:1px solid var(--grid);padding:4px 7px;text-align:left;}
+th{background:var(--card);font-weight:600;}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;}
+.kpi{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0;}
+.kpi div{flex:1 1 148px;background:var(--card);border:1px solid var(--grid);border-radius:8px;padding:10px 12px;}
+.kpi b{display:block;font-size:19px;font-variant-numeric:tabular-nums;}
+.kpi span{font-size:11.5px;color:var(--dim);}
+code{background:var(--card);padding:1px 5px;border-radius:4px;font-size:12px;}
+.note{background:var(--card);border-left:3px solid var(--acc);padding:8px 12px;margin:10px 0;font-size:13px;}
+.warn{border-left-color:var(--warn);}.bad{border-left-color:var(--bad);}.ok{border-left-color:var(--ok);}
+svg{max-width:100%;height:auto;}
+.flex{display:flex;gap:16px;flex-wrap:wrap;}.flex>div{flex:1 1 420px;}
+details{border:1px solid var(--grid);border-radius:8px;margin:14px 0;background:var(--card);}
+summary{cursor:pointer;padding:9px 13px;font-weight:600;font-size:15px;color:var(--acc);user-select:none;list-style:none;}
+summary::before{content:"▸ ";font-size:12px;} details[open] summary::before{content:"▾ ";}
+details[open] summary{border-bottom:1px dashed var(--grid);} .dbody{padding:10px 13px;}
+</style>
+</head><body><div class="wrap">
+<h1>车牌光伏 · 全天运行日志分析 2026-10-19</h1>
+<div style="color:var(--dim);font-size:13px">生成于 2026-10-19 22:05:56 · 数据源 mqtt_all.csv · 共 440 条报文</div>
+<div class="kpi">
+<div><b>18</b><span>自然运行段会话（3.3 h）</span></div>
+<div><b>30</b><span>全天会话总数</span></div>
+<div><b>695</b><span>s 周期中位</span></div>
+<div><b>89</b><span>s 在线时长中位</span></div>
+<div><b>13.43</b><span>% 占空比（自然段）</span></div>
+<div><b>8.17</b><span>mA 等效平均电流</span></div>
+<div><b>27.0</b><span>mAh 自然段累计</span></div>
+<div><b>5</b><span>天 1000mAh 推算</span></div>
+</div>
+<div class="note warn">⚠️ <b>板子已静默 205 分钟</b>（最后一条上行 18:40:27，按周期 695 s，本应 18:52:02、19:03:37 各来一轮）。<br>排查顺序：① <b>是否被断电/取回</b>（人为，最常见）；② 日落之后光伏断供，只剩电池撑 4G 入网脉冲（发射瞬间 ~A 级浪涌），若电池已亏或内阻大 ⇒ <b>MCU 还在跑但 4G 起不来</b>，而调试固件把低压保护关了，不会有停机保护；③ VBAT 低于模组 VB 下限，模组不上电；④ 固件/4G 卡死。<br>建议：先量 VBAT（空载 + 4G 起网瞬间），必要时接上太阳直流电源复标。</div>
+<div class="note">当天固件为<b>调试档</b>：<code>LP_DEFAULT_PERIOD_S=600</code>（睡 10 min 轮一次）、低压保护<b>默认关</b>；FPC 天线<b>未接</b>。量产档应为 <code>7200</code> s + 低压保护开，见文末换算。本报告中所有平均电流<b>只用自然运行段</b>计算，人工调试/接线操作的时段单独剔除。</div>
+<h2>1. 全天会话时间线</h2>
+<svg viewBox="0 0 1000 210" width="100%" role="img">
+<rect x="0" y="0" width="1000" height="210" fill="var(--card)"/>
+<rect x="564.9" y="26" width="424.1" height="152" fill="var(--ok)" opacity="0.10"/>
+<text x="567.9" y="22" font-size="10" fill="var(--ok)">自然运行段</text>
+<line x1="58.0" y1="26" x2="58.0" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<text x="58.0" y="192" font-size="11" fill="var(--dim)" text-anchor="middle">11</text>
+<line x1="118.6" y1="26" x2="118.6" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<line x1="179.2" y1="26" x2="179.2" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<text x="179.2" y="192" font-size="11" fill="var(--dim)" text-anchor="middle">12</text>
+<line x1="239.8" y1="26" x2="239.8" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<line x1="300.4" y1="26" x2="300.4" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<text x="300.4" y="192" font-size="11" fill="var(--dim)" text-anchor="middle">13</text>
+<line x1="361.0" y1="26" x2="361.0" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<line x1="421.5" y1="26" x2="421.5" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<text x="421.5" y="192" font-size="11" fill="var(--dim)" text-anchor="middle">14</text>
+<line x1="482.1" y1="26" x2="482.1" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<line x1="542.7" y1="26" x2="542.7" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<text x="542.7" y="192" font-size="11" fill="var(--dim)" text-anchor="middle">15</text>
+<line x1="603.3" y1="26" x2="603.3" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<line x1="663.9" y1="26" x2="663.9" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<text x="663.9" y="192" font-size="11" fill="var(--dim)" text-anchor="middle">16</text>
+<line x1="724.5" y1="26" x2="724.5" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<line x1="785.1" y1="26" x2="785.1" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<text x="785.1" y="192" font-size="11" fill="var(--dim)" text-anchor="middle">17</text>
+<line x1="845.7" y1="26" x2="845.7" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<line x1="906.3" y1="26" x2="906.3" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<text x="906.3" y="192" font-size="11" fill="var(--dim)" text-anchor="middle">18</text>
+<line x1="966.9" y1="26" x2="966.9" y2="178" stroke="var(--grid)" stroke-width="1"/>
+<rect x="150.3" y="38" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="174.2" y="53" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="197.2" y="68" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="220.6" y="83" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="243.9" y="98" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="287.0" y="113" width="6.6" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="314.1" y="38" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="443.6" y="53" width="3.0" height="11" rx="2" fill="var(--bad)" opacity="0.9"/>
+<rect x="494.4" y="68" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="517.3" y="83" width="3.0" height="11" rx="2" fill="var(--warn)" opacity="0.9"/>
+<rect x="540.6" y="98" width="3.0" height="11" rx="2" fill="var(--warn)" opacity="0.9"/>
+<rect x="564.0" y="113" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="587.4" y="38" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="610.8" y="53" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="634.2" y="68" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="657.6" y="83" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="681.0" y="98" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="704.4" y="113" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="727.7" y="38" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="751.1" y="53" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="774.5" y="68" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="797.9" y="83" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="821.3" y="98" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="844.7" y="113" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="868.1" y="38" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="891.5" y="53" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="914.9" y="68" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="938.2" y="83" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="961.6" y="98" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<rect x="985.0" y="113" width="3.0" height="11" rx="2" fill="var(--acc)" opacity="0.9"/>
+<text x="58" y="16" font-size="11" fill="var(--dim)">蓝=正常轮 / 黄=含人工指令 / 红=无 report；横向=当天小时</text>
+</svg>
+<h2>2. 自然运行段 vs 全天</h2>
+<table><tr><th>区段</th><th class='n'>会话</th><th class='n'>跨度h</th><th class='n'>周期中位s</th><th class='n'>在线中位s</th><th class='n'>占空比%</th><th class='n'>等效mA</th><th class='n'>累计mAh</th><th class='n'>report</th></tr>
+<tr><td>自然运行段（15:11–18:41）</td><td class='n'>18</td><td class='n'>3.31</td><td class='n'>695</td><td class='n'>89</td><td class='n'>13.43</td><td class='n'>8.17</td><td class='n'>27.0</td><td class='n'>18</td></tr>
+<tr><td>全天（含调试）</td><td class='n'>30</td><td class='n'>6.91</td><td class='n'>695</td><td class='n'>89</td><td class='n'>10.66</td><td class='n'>6.53</td><td class='n'>45.2</td><td class='n'>30</td></tr>
+</table>
+<div class="note">被剔除的 12 轮（人工调试/接线时段）：11:45、11:57、12:08、12:20、12:32、12:53、13:06、14:10、14:36、14:47、14:58、15:10</div>
+<h2>3. 自然运行段的分布</h2><div class="flex">
+<div><svg viewBox="0 0 470 200" width="100%" role="img">
+<rect x="0" y="0" width="470" height="200" fill="var(--card)"/>
+<rect x="41.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="57.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">650</text>
+<rect x="76.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="92.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">670</text>
+<rect x="111.0" y="24.0" width="33.0" height="142.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="127.5" y="22.0" font-size="9" fill="var(--dim)" text-anchor="middle">17</text>
+<text x="127.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">690</text>
+<rect x="146.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="162.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">710</text>
+<rect x="181.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="197.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">730</text>
+<rect x="216.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="232.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">750</text>
+<rect x="251.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="267.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">770</text>
+<rect x="286.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="302.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">790</text>
+<rect x="321.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="337.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">810</text>
+<rect x="356.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="372.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">830</text>
+<rect x="391.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="407.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">850</text>
+<rect x="426.0" y="166.0" width="33.0" height="0.0" rx="2" fill="var(--acc)" opacity="0.85"/>
+<text x="442.5" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">870</text>
+<text x="40" y="13" font-size="11" fill="var(--fg)">起-起间隔分布（s）</text>
+</svg></div>
+<div><svg viewBox="0 0 470 200" width="100%" role="img">
+<rect x="0" y="0" width="470" height="200" fill="var(--card)"/>
+<rect x="41.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="61.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">0</text>
+<rect x="83.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="103.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">25</text>
+<rect x="125.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="145.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">50</text>
+<rect x="167.0" y="24.0" width="40.0" height="142.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="187.0" y="22.0" font-size="9" fill="var(--dim)" text-anchor="middle">18</text>
+<text x="187.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">75</text>
+<rect x="209.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="229.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">100</text>
+<rect x="251.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="271.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">125</text>
+<rect x="293.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="313.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">150</text>
+<rect x="335.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="355.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">175</text>
+<rect x="377.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="397.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">200</text>
+<rect x="419.0" y="166.0" width="40.0" height="0.0" rx="2" fill="var(--ok)" opacity="0.85"/>
+<text x="439.0" y="178" font-size="9" fill="var(--dim)" text-anchor="middle">225</text>
+<text x="40" y="13" font-size="11" fill="var(--fg)">会话时长分布（s）</text>
+</svg></div>
+</div>
+<table><tr><th>指标</th><th class='n'>中位</th><th class='n'>均值</th><th class='n'>最小</th><th class='n'>最大</th></tr><tr><td>起-起间隔 (s)</td><td class='n'>695</td><td class='n'>695</td><td class='n'>695</td><td class='n'>695</td></tr><tr><td>会话时长 (s)</td><td class='n'>89</td><td class='n'>89</td><td class='n'>89</td><td class='n'>89</td></tr></table>
+<h2>4. 功耗与续航</h2>
+<div class="kpi"><div><b>8.17</b><span>mA 当前调试档（600s）</span></div><div><b>27.0</b><span>mAh 自然段累计</span></div><div><b>0.947</b><span>mA 量产档（7200s）推算</span></div><div><b>44</b><span>天 1000mAh @量产</span></div><div><b>196.2</b><span>mA·h/天 @当前档</span></div></div>
+<div class="note">口径：在线段统一 <b>59.4 mA</b>（4G 上电在线实测均值，含 DRX），睡眠段 <b>0.226 mA</b>（Stop 实测）。自然运行段 3.3 h 中在线累计 26.6 min。4G 实际在 ~14.6（仅保活）~59 mA 之间随信号浮动，此值为中位口径。</div>
+<details><summary>5. 逐轮明细 · 共 30 轮，点击展开</summary><div class="dbody"><table><tr><th class="n">#</th><th>开始</th><th class="n">睡眠s(距上轮结束)</th><th class="n">时长s</th><th class="n">ready</th><th class="n">report</th><th class="n">ACK</th><th class="n">噪声</th><th>标记</th></tr>
+<tr><td class="n">1</td><td>11:45:43</td><td class="n">0</td><td class="n">89.8</td><td class="n">2</td><td class="n">1</td><td class="n">0</td><td class="n">5</td><td>调试段；姿态-7/92</td></tr>
+<tr><td class="n">2</td><td>11:57:30</td><td class="n">618</td><td class="n">76.9</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">5</td><td>调试段；姿态-5/-21</td></tr>
+<tr><td class="n">3</td><td>12:08:54</td><td class="n">607</td><td class="n">85.2</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">6</td><td>调试段；姿态2/86</td></tr>
+<tr><td class="n">4</td><td>12:20:31</td><td class="n">611</td><td class="n">86.0</td><td class="n">5</td><td class="n">1</td><td class="n">0</td><td class="n">8</td><td>调试段；姿态7/84</td></tr>
+<tr><td class="n">5</td><td>12:32:03</td><td class="n">607</td><td class="n">88.3</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>调试段；姿态6/87</td></tr>
+<tr><td class="n">6</td><td>12:53:24</td><td class="n">1192</td><td class="n">197.2</td><td class="n">11</td><td class="n">2</td><td class="n">0</td><td class="n">10</td><td>调试段；超长会话；姿态6/87</td></tr>
+<tr><td class="n">7</td><td>13:06:47</td><td class="n">606</td><td class="n">88.8</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>调试段；姿态6/86</td></tr>
+<tr><td class="n">8</td><td>14:10:55</td><td class="n">3759</td><td class="n">2.7</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">2</td><td>无report；调试段；空窗63min</td></tr>
+<tr><td class="n">9</td><td>14:36:03</td><td class="n">1505</td><td class="n">73.7</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">5</td><td>调试段；空窗25min；姿态-6/138</td></tr>
+<tr><td class="n">10</td><td>14:47:23</td><td class="n">606</td><td class="n">88.6</td><td class="n">6</td><td class="n">1</td><td class="n">5</td><td class="n">7</td><td>人工指令；调试段；姿态-3/135</td></tr>
+<tr><td class="n">11</td><td>14:58:58</td><td class="n">606</td><td class="n">88.7</td><td class="n">6</td><td class="n">1</td><td class="n">6</td><td class="n">7</td><td>人工指令；调试段；姿态-4/137</td></tr>
+<tr><td class="n">12</td><td>15:10:32</td><td class="n">606</td><td class="n">88.7</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>调试段；姿态-3/138</td></tr>
+<tr><td class="n">13</td><td>15:22:07</td><td class="n">606</td><td class="n">88.8</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-5/139</td></tr>
+<tr><td class="n">14</td><td>15:33:42</td><td class="n">606</td><td class="n">89.0</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-2/141</td></tr>
+<tr><td class="n">15</td><td>15:45:17</td><td class="n">606</td><td class="n">88.6</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-2/137</td></tr>
+<tr><td class="n">16</td><td>15:56:51</td><td class="n">606</td><td class="n">88.9</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-4/140</td></tr>
+<tr><td class="n">17</td><td>16:08:26</td><td class="n">606</td><td class="n">89.0</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-6/141</td></tr>
+<tr><td class="n">18</td><td>16:20:01</td><td class="n">606</td><td class="n">88.9</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-3/140</td></tr>
+<tr><td class="n">19</td><td>16:31:36</td><td class="n">606</td><td class="n">88.9</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-4/143</td></tr>
+<tr><td class="n">20</td><td>16:43:11</td><td class="n">606</td><td class="n">88.8</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-6/139</td></tr>
+<tr><td class="n">21</td><td>16:54:45</td><td class="n">606</td><td class="n">88.9</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-6/143</td></tr>
+<tr><td class="n">22</td><td>17:06:20</td><td class="n">606</td><td class="n">89.0</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-2/144</td></tr>
+<tr><td class="n">23</td><td>17:17:55</td><td class="n">606</td><td class="n">88.6</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-4/144</td></tr>
+<tr><td class="n">24</td><td>17:29:30</td><td class="n">606</td><td class="n">88.9</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-4/141</td></tr>
+<tr><td class="n">25</td><td>17:41:05</td><td class="n">606</td><td class="n">88.7</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-6/142</td></tr>
+<tr><td class="n">26</td><td>17:52:40</td><td class="n">606</td><td class="n">88.5</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-5/147</td></tr>
+<tr><td class="n">27</td><td>18:04:14</td><td class="n">606</td><td class="n">88.6</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-4/149</td></tr>
+<tr><td class="n">28</td><td>18:15:49</td><td class="n">606</td><td class="n">88.8</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-5/147</td></tr>
+<tr><td class="n">29</td><td>18:27:24</td><td class="n">606</td><td class="n">88.8</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-5/145</td></tr>
+<tr><td class="n">30</td><td>18:38:59</td><td class="n">606</td><td class="n">88.7</td><td class="n">6</td><td class="n">1</td><td class="n">0</td><td class="n">7</td><td>姿态-5/144</td></tr>
+</table></div></details>
+<h2>6. 三支路电流采样（INA228）</h2>
+<div class="note">文件 <code>three_branch_141801.csv</code>，120 行 / 138 s。采样期间板子在 Stop 睡态；当时三路表笔<b>均接反</b>，故 CH1/CH2 为负（已在随后对调修正），此处按绝对值解读。</div>
+<table><tr><th>支路</th><th class='n'>电流均值mA</th><th class='n'>最小</th><th class='n'>最大</th><th class='n'>电压均值V</th></tr>
+<tr><td>CH1 电池</td><td class='n'>-0.270</td><td class='n'>-1.060</td><td class='n'>-0.210</td><td class='n'>3.971</td></tr>
+<tr><td>CH2 LDO 支路</td><td class='n'>-0.175</td><td class='n'>-0.210</td><td class='n'>-0.120</td><td class='n'>3.970</td></tr>
+<tr><td>CH3 光伏</td><td class='n'>0.031</td><td class='n'>0.020</td><td class='n'>0.050</td><td class='n'>1.113</td></tr>
+</table>
+<div class="note">|CH1|−|CH2| = 0.095 mA ≈ 4G 漏电 + CN3142 静态 + BAT_EN 分压，与整板 Stop 0.226 mA 同量级 ⇒ 表 3 割点（LDO VIN ↔ C17）接法正确。</div>
+<details><summary>7. 人工下发指令 · 共 23 条，点击展开</summary><div class="dbody"><table><tr><th>时间</th><th>内容</th></tr>
+<tr><td>11:41:12</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>11:41:14</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:203}</code></td></tr>
+<tr><td>11:41:17</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:212}</code></td></tr>
+<tr><td>11:41:19</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:212}</code></td></tr>
+<tr><td>11:58:43</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>11:58:48</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>11:58:58</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>11:59:00</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;yellow&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>11:59:05</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>11:59:12</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:221}</code></td></tr>
+<tr><td>11:59:14</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;off&quot;}</code></td></tr>
+<tr><td>14:47:23</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>14:47:35</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;off&quot;}</code></td></tr>
+<tr><td>14:47:47</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>14:47:59</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;off&quot;}</code></td></tr>
+<tr><td>14:48:11</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;yellow&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>14:48:23</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;yellow&quot;,&quot;state&quot;:&quot;off&quot;}</code></td></tr>
+<tr><td>14:59:03</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>14:59:16</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;green&quot;,&quot;state&quot;:&quot;off&quot;}</code></td></tr>
+<tr><td>14:59:27</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>14:59:40</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;red&quot;,&quot;state&quot;:&quot;off&quot;}</code></td></tr>
+<tr><td>14:59:52</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;yellow&quot;,&quot;state&quot;:&quot;on&quot;,&quot;bright&quot;:255}</code></td></tr>
+<tr><td>15:00:04</td><td><code>{&quot;cmd&quot;:&quot;led&quot;,&quot;color&quot;:&quot;yellow&quot;,&quot;state&quot;:&quot;off&quot;}</code></td></tr>
+</table></div></details>
+</div></body></html>
